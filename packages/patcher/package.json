@@ -1,0 +1,24 @@
+{
+  "name": "@recast-a11y/patcher",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@recast-a11y/classifier": "workspace:*",
+    "jscodeshift": "^17.0.0",
+    "node-html-parser": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/jscodeshift": "^0.12.0"
+  }
+}

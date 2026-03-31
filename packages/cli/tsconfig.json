@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../renderer" },
+    { "path": "../detector" },
+    { "path": "../classifier" },
+    { "path": "../llm" },
+    { "path": "../tracer" },
+    { "path": "../patcher" },
+    { "path": "../reporter" }
+  ]
+}

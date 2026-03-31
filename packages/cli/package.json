@@ -1,0 +1,28 @@
+{
+  "name": "@recast-a11y/cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "recast": "dist/bin.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@recast-a11y/renderer": "workspace:*",
+    "@recast-a11y/detector": "workspace:*",
+    "@recast-a11y/classifier": "workspace:*",
+    "@recast-a11y/llm": "workspace:*",
+    "@recast-a11y/tracer": "workspace:*",
+    "@recast-a11y/patcher": "workspace:*",
+    "@recast-a11y/reporter": "workspace:*"
+  }
+}
