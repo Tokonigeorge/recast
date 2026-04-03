@@ -9,11 +9,14 @@
     "build": "tsc -b packages/*/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit -b packages/*/tsconfig.json"
+    "lint": "tsc --noEmit -b packages/*/tsconfig.json",
+    "test:real": "pnpm tsx packages/cli/src/test-real-sites.ts"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "dotenv": "^17.4.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^3.0.0"
   }
 }

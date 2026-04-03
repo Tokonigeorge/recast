@@ -1,12 +1,10 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
-/**
- * Manages a single shared Chromium instance with a pool of reusable pages.
- * Avoids spinning up a new browser per page — one process handles all rendering.
- */
+/** Single shared Chromium instance with a pool of reusable pages. */
 export class BrowserPool {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
+  private initPromise: Promise<void> | null = null;
   private availablePages: Page[] = [];
   private maxPages: number;
 
@@ -14,11 +12,17 @@ export class BrowserPool {
     this.maxPages = maxPages;
   }
 
+  /** Mutex-guarded init — safe to call concurrently. */
   async init(): Promise<void> {
     if (this.browser) return;
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this.doInit();
+    return this.initPromise;
+  }
+
+  private async doInit(): Promise<void> {
     this.browser = await chromium.launch({ headless: true });
     this.context = await this.browser.newContext({
-      // Disable images/media for speed — we only need the DOM
       javaScriptEnabled: true,
       bypassCSP: true,
     });
@@ -26,9 +30,7 @@ export class BrowserPool {
 
   async acquirePage(): Promise<Page> {
     await this.init();
-    const page = this.availablePages.pop();
-    if (page) return page;
-    return this.context!.newPage();
+    return this.availablePages.pop() ?? this.context!.newPage();
   }
 
   releasePage(page: Page): void {
@@ -48,5 +50,6 @@ export class BrowserPool {
     await this.browser?.close().catch(() => {});
     this.browser = null;
     this.context = null;
+    this.initPromise = null;
   }
 }

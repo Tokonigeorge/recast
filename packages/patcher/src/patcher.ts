@@ -7,81 +7,57 @@ import { patchJsx } from "./jsx-patcher.js";
 const JSX_EXTENSIONS = new Set([".jsx", ".tsx", ".js", ".ts"]);
 const HTML_EXTENSIONS = new Set([".html", ".htm", ".vue", ".svelte"]);
 
-/**
- * Apply a single fix to the source file at the given location.
- * Determines the right patching strategy based on file extension.
- * Returns the Patch object if successful, null if patching failed.
- */
+function computePatch(
+  fileContents: string,
+  sourceRef: SourceRef,
+  violation: Violation,
+  fix: Fix,
+): { patchedContents: string; patch: Patch } | null {
+  const ext = extname(sourceRef.file).toLowerCase();
+
+  const patchFn = JSX_EXTENSIONS.has(ext) ? patchJsx
+    : HTML_EXTENSIONS.has(ext) ? patchHtml
+    : patchHtml; // fallback
+
+  const patchedContents = patchFn(fileContents, sourceRef, violation.html, fix);
+  if (!patchedContents || patchedContents === fileContents) return null;
+
+  const originalLines = fileContents.split("\n");
+  const patchedLines = patchedContents.split("\n");
+  const lineIdx = sourceRef.line - 1;
+
+  return {
+    patchedContents,
+    patch: {
+      sourceRef,
+      violation,
+      fix,
+      originalCode: originalLines[lineIdx] ?? "",
+      fixedCode: patchedLines[lineIdx] ?? "",
+    },
+  };
+}
+
+/** Compute a patch without writing to disk. */
 export async function applyPatch(
   violation: Violation,
   fix: Fix,
   sourceRef: SourceRef,
 ): Promise<Patch | null> {
-  const ext = extname(sourceRef.file).toLowerCase();
   const fileContents = await readFile(sourceRef.file, "utf-8");
-
-  let patchedContents: string | null = null;
-
-  if (JSX_EXTENSIONS.has(ext)) {
-    patchedContents = patchJsx(fileContents, sourceRef, violation.html, fix);
-  } else if (HTML_EXTENSIONS.has(ext)) {
-    patchedContents = patchHtml(fileContents, sourceRef, violation.html, fix);
-  } else {
-    // Unknown file type — try HTML patching as fallback
-    patchedContents = patchHtml(fileContents, sourceRef, violation.html, fix);
-  }
-
-  if (!patchedContents || patchedContents === fileContents) return null;
-
-  // Extract the original and fixed lines for the patch record
-  const originalLines = fileContents.split("\n");
-  const patchedLines = patchedContents.split("\n");
-  const lineIdx = sourceRef.line - 1;
-
-  return {
-    sourceRef,
-    violation,
-    fix,
-    originalCode: originalLines[lineIdx] ?? "",
-    fixedCode: patchedLines[lineIdx] ?? "",
-  };
+  return computePatch(fileContents, sourceRef, violation, fix)?.patch ?? null;
 }
 
-/**
- * Apply a patch by writing the changes to the file.
- * Reads the file again to ensure freshness (another patch may have been applied).
- */
+/** Compute and write a patch to disk. */
 export async function writePatch(
   violation: Violation,
   fix: Fix,
   sourceRef: SourceRef,
 ): Promise<Patch | null> {
-  const ext = extname(sourceRef.file).toLowerCase();
   const fileContents = await readFile(sourceRef.file, "utf-8");
+  const result = computePatch(fileContents, sourceRef, violation, fix);
+  if (!result) return null;
 
-  let patchedContents: string | null = null;
-
-  if (JSX_EXTENSIONS.has(ext)) {
-    patchedContents = patchJsx(fileContents, sourceRef, violation.html, fix);
-  } else if (HTML_EXTENSIONS.has(ext)) {
-    patchedContents = patchHtml(fileContents, sourceRef, violation.html, fix);
-  } else {
-    patchedContents = patchHtml(fileContents, sourceRef, violation.html, fix);
-  }
-
-  if (!patchedContents || patchedContents === fileContents) return null;
-
-  await writeFile(sourceRef.file, patchedContents, "utf-8");
-
-  const originalLines = fileContents.split("\n");
-  const patchedLines = patchedContents.split("\n");
-  const lineIdx = sourceRef.line - 1;
-
-  return {
-    sourceRef,
-    violation,
-    fix,
-    originalCode: originalLines[lineIdx] ?? "",
-    fixedCode: patchedLines[lineIdx] ?? "",
-  };
+  await writeFile(sourceRef.file, result.patchedContents, "utf-8");
+  return result.patch;
 }

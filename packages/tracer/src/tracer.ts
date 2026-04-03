@@ -72,27 +72,37 @@ export function traceInStaticHtml(
   filePath: string,
   elementHtml: string,
 ): SourceRef | null {
-  // Extract a distinctive pattern from the element HTML
-  // Try to find a unique attribute combination
-  const tagMatch = elementHtml.match(/<(\w+)\s+([^>]*)/);
-  if (!tagMatch) return null;
-
-  // Build a search pattern from the element's opening tag
-  const searchPattern = tagMatch[0];
   const lines = html.split("\n");
 
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes(searchPattern)) {
-      return { file: filePath, line: i + 1 };
+  // Strategy 1: Match the full opening tag pattern (tag + attributes)
+  const tagWithAttrs = elementHtml.match(/<(\w+)\s+([^>]*)/);
+  if (tagWithAttrs) {
+    const searchPattern = tagWithAttrs[0];
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(searchPattern)) {
+        return { file: filePath, line: i + 1 };
+      }
     }
   }
 
-  // Fallback: try just the tag + first attribute
-  const simpleMatch = elementHtml.match(/<\w+[^>]*(?:id|class|aria-)=["'][^"']+["']/);
-  if (simpleMatch) {
-    const pattern = simpleMatch[0];
+  // Strategy 2: Match by distinctive attribute (id, class, aria-*)
+  const attrMatch = elementHtml.match(/<\w+[^>]*(?:id|class|aria-)=["'][^"']+["']/);
+  if (attrMatch) {
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes(pattern)) {
+      if (lines[i].includes(attrMatch[0])) {
+        return { file: filePath, line: i + 1 };
+      }
+    }
+  }
+
+  // Strategy 3: Match bare tag (e.g., <html>, <body>) — for elements with no attributes
+  const bareTag = elementHtml.match(/<(\w+)\s*>/);
+  if (bareTag) {
+    const tag = bareTag[1];
+    for (let i = 0; i < lines.length; i++) {
+      // Match the bare opening tag, not a closing tag or a tag with attributes
+      const lineMatch = lines[i].match(new RegExp(`<${tag}(?:\\s*>|\\s+)`));
+      if (lineMatch) {
         return { file: filePath, line: i + 1 };
       }
     }

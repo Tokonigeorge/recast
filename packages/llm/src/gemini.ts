@@ -2,10 +2,10 @@ import { GoogleGenerativeAI, type GenerativeModel } from "@google/generative-ai"
 import type { EnrichedViolation, Fix } from "@recast-a11y/classifier";
 import { SYSTEM_PROMPT, buildUserPrompt } from "./prompts.js";
 import { parseLlmOutput } from "./parser.js";
+import { CostTracker, type SessionCostSummary } from "./cost-tracker.js";
 
 export interface GeminiClientOptions {
   apiKey: string;
-  /** Model for bulk/mechanical fixes */
   bulkModel?: string;
   /** Model for judgment calls requiring stronger reasoning */
   judgmentModel?: string;
@@ -26,32 +26,54 @@ const JUDGMENT_RULES = new Set([
 export class GeminiClient {
   private bulkModel: GenerativeModel;
   private judgmentModel: GenerativeModel;
+  private bulkModelName: string;
+  private judgmentModelName: string;
   private concurrency: number;
+  readonly costTracker: CostTracker;
 
   constructor(opts: GeminiClientOptions) {
     const genAI = new GoogleGenerativeAI(opts.apiKey);
+    this.bulkModelName = opts.bulkModel ?? "gemini-2.5-flash-lite";
+    this.judgmentModelName = opts.judgmentModel ?? "gemini-2.5-flash";
     this.bulkModel = genAI.getGenerativeModel({
-      model: opts.bulkModel ?? "gemini-2.5-flash-lite-preview-06-17",
+      model: this.bulkModelName,
       systemInstruction: SYSTEM_PROMPT,
     });
     this.judgmentModel = genAI.getGenerativeModel({
-      model: opts.judgmentModel ?? "gemini-2.5-flash-preview-05-20",
+      model: this.judgmentModelName,
       systemInstruction: SYSTEM_PROMPT,
     });
     this.concurrency = opts.concurrency ?? 5;
+    this.costTracker = new CostTracker();
   }
 
   /** Generate a fix for a single enriched violation */
   async generateFix(violation: EnrichedViolation): Promise<Fix> {
-    const model = JUDGMENT_RULES.has(violation.ruleId)
-      ? this.judgmentModel
-      : this.bulkModel;
+    const isJudgment = JUDGMENT_RULES.has(violation.ruleId);
+    const model = isJudgment ? this.judgmentModel : this.bulkModel;
+    const modelName = isJudgment ? this.judgmentModelName : this.bulkModelName;
 
     const prompt = buildUserPrompt(violation);
+    const start = performance.now();
 
     try {
       const result = await model.generateContent(prompt);
+      const durationMs = performance.now() - start;
       const text = result.response.text();
+
+      // Track cost
+      const usage = result.response.usageMetadata;
+      if (usage) {
+        this.costTracker.record(
+          modelName,
+          violation.ruleId,
+          usage.promptTokenCount,
+          usage.candidatesTokenCount,
+          usage.cachedContentTokenCount ?? 0,
+          durationMs,
+        );
+      }
+
       return parseLlmOutput(text);
     } catch (error) {
       return {
@@ -73,7 +95,6 @@ export class GeminiClient {
     const results: Fix[] = new Array(violations.length);
     let cursor = 0;
 
-    // Process in batches for concurrency control
     while (cursor < violations.length) {
       const batch = violations.slice(cursor, cursor + this.concurrency);
       const fixes = await Promise.all(
@@ -86,5 +107,10 @@ export class GeminiClient {
     }
 
     return results;
+  }
+
+  /** Get cost summary for the current session */
+  getCostSummary(): SessionCostSummary {
+    return this.costTracker.getSummary();
   }
 }

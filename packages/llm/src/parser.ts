@@ -9,13 +9,8 @@ const VALID_FIX_TYPES: Set<string> = new Set([
   "manual-required",
 ]);
 
-/**
- * Parse the YAML fix block from LLM output.
- * The LLM first reasons freely, then outputs a structured YAML block at the end.
- * We extract and parse only the YAML block.
- */
+/** Extract the YAML fix block from the end of LLM free-reasoning output. */
 export function parseLlmOutput(text: string): Fix {
-  // Find the fix: block — it's always at the end of the response
   const fixIndex = text.lastIndexOf("fix:");
   if (fixIndex === -1) {
     return {
@@ -41,7 +36,6 @@ export function parseLlmOutput(text: string): Fix {
     if (!match) continue;
 
     const [, key, rawValue] = match;
-    // Strip surrounding quotes if present
     const value = rawValue.replace(/^["']|["']$/g, "").trim();
 
     switch (key) {

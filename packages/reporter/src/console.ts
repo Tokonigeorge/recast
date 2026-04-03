@@ -5,6 +5,17 @@ import type {
   Impact,
 } from "@recast-a11y/classifier";
 
+export interface CostSummaryData {
+  totalCalls: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCachedTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  byModel: Record<string, { calls: number; tokens: number; cost: number }>;
+  byRule: Record<string, { calls: number; tokens: number; cost: number }>;
+}
+
 const IMPACT_COLORS: Record<Impact, string> = {
   critical: "\x1b[31m", // red
   serious: "\x1b[33m",  // yellow
@@ -101,4 +112,48 @@ export function printSummary(summary: ScanSummary): void {
   console.log(
     `\nEstimated compliance improvement: ${summary.autoFixed}/${summary.totalViolations} violations resolved (${pct}%)\n`,
   );
+}
+
+function formatUsd(amount: number): string {
+  if (amount < 0.001) return `$${amount.toFixed(6)}`;
+  if (amount < 1) return `$${amount.toFixed(4)}`;
+  return `$${amount.toFixed(2)}`;
+}
+
+export function printCostSummary(cost: CostSummaryData): void {
+  if (cost.totalCalls === 0) {
+    console.log(`${BOLD}─── LLM Cost ───${RESET}`);
+    console.log("No LLM calls made (all fixes were high-confidence rules).\n");
+    return;
+  }
+
+  const DIM = "\x1b[2m";
+
+  console.log(`${BOLD}─── LLM Cost ───${RESET}`);
+  console.log(`Total LLM calls:     ${cost.totalCalls}`);
+  console.log(`Input tokens:        ${cost.totalInputTokens.toLocaleString()}${cost.totalCachedTokens > 0 ? ` ${DIM}(${cost.totalCachedTokens.toLocaleString()} cached)${RESET}` : ""}`);
+  console.log(`Output tokens:       ${cost.totalOutputTokens.toLocaleString()}`);
+  console.log(`Total tokens:        ${cost.totalTokens.toLocaleString()}`);
+  console.log(`${BOLD}Total cost:          ${formatUsd(cost.totalCost)}${RESET}`);
+
+  // By model breakdown
+  const models = Object.entries(cost.byModel);
+  if (models.length > 0) {
+    console.log(`\n  By model:`);
+    for (const [model, data] of models) {
+      const shortName = model.replace(/^gemini-/, "").replace(/-preview.*$/, "");
+      console.log(`    ${shortName}: ${data.calls} calls, ${data.tokens.toLocaleString()} tokens, ${formatUsd(data.cost)}`);
+    }
+  }
+
+  // Top rules by cost
+  const rules = Object.entries(cost.byRule).sort((a, b) => b[1].cost - a[1].cost);
+  if (rules.length > 0) {
+    console.log(`\n  By rule:`);
+    for (const [rule, data] of rules.slice(0, 5)) {
+      console.log(`    ${rule}: ${data.calls} calls, ${formatUsd(data.cost)}`);
+    }
+  }
+
+  console.log();
 }

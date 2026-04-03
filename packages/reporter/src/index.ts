@@ -5,4 +5,6 @@ export {
   printPatchSummary,
   printFlaggedForReview,
   printSummary,
+  printCostSummary,
+  type CostSummaryData,
 } from "./console.js";

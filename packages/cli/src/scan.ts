@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import type { Page } from "playwright";
 import { Renderer } from "@recast-a11y/renderer";
 import { detect, enrichViolation } from "@recast-a11y/detector";
 import { classify } from "@recast-a11y/classifier";
@@ -19,6 +20,7 @@ import {
   printPatchSummary,
   printFlaggedForReview,
   printSummary,
+  printCostSummary,
 } from "@recast-a11y/reporter";
 import type { RecastConfig } from "./config.js";
 
@@ -36,7 +38,6 @@ export async function runScan(config: RecastConfig): Promise<void> {
     timeout: config.timeout,
   });
 
-  // Initialize LLM client if API key is available
   const llmClient = config.geminiApiKey
     ? new GeminiClient({ apiKey: config.geminiApiKey })
     : null;
@@ -49,22 +50,22 @@ export async function runScan(config: RecastConfig): Promise<void> {
   const bySiteType: Record<SiteType, number> = { static: 0, ssr: 0, spa: 0 };
 
   for (const target of allTargets) {
+    let page: Page | null = null;
     try {
-      // Render the page
       const isUrl = target.startsWith("http");
-      const { result, page } = isUrl
+      const rendered = isUrl
         ? await renderer.renderUrl(target)
         : await renderer.renderHtml(
             await readFile(target, "utf-8"),
             `file://${target}`,
           );
 
+      const p = rendered.page;
+      page = p;
+      const { result } = rendered;
       bySiteType[result.siteType]++;
 
-      // Detect violations
-      const { violations } = await detect(page, result.url);
-
-      // Classify violations
+      const { violations } = await detect(p, result.url);
       const classification = classify(violations, config.autoFixAbove);
       const allClassified = [...classification.high, ...classification.low];
       allViolations.push(...allClassified);
@@ -75,10 +76,9 @@ export async function runScan(config: RecastConfig): Promise<void> {
 
       printViolationSummary(allClassified);
 
-      // Process high-confidence fixes
       for (const cv of classification.high) {
         const sourceRef = isUrl
-          ? await traceToSource(page, cv.violation.target)
+          ? await traceToSource(p, cv.violation.target)
           : traceInStaticHtml(result.html, target, cv.violation.html);
 
         if (sourceRef && config.apply) {
@@ -88,7 +88,6 @@ export async function runScan(config: RecastConfig): Promise<void> {
             modifiedFiles.add(sourceRef.file);
           }
         } else if (sourceRef) {
-          // Dry run — just record the patch
           allPatches.push({
             sourceRef,
             violation: cv.violation,
@@ -99,21 +98,20 @@ export async function runScan(config: RecastConfig): Promise<void> {
         }
       }
 
-      // Process low-confidence violations with LLM
       if (llmClient && classification.low.length > 0) {
         const enriched = await Promise.all(
-          classification.low.map((cv) => enrichViolation(page, cv.violation)),
+          classification.low.map((cv) => enrichViolation(p, cv.violation)),
         );
         const fixes = await llmClient.generateFixes(enriched);
 
         for (let i = 0; i < classification.low.length; i++) {
           const cv = classification.low[i];
           const fix = fixes[i];
-          cv.fix = fix;
+          const updatedCv = { ...cv, fix };
 
           if (fix.confidence >= config.autoFixAbove) {
             const sourceRef = isUrl
-              ? await traceToSource(page, cv.violation.target)
+              ? await traceToSource(p, cv.violation.target)
               : traceInStaticHtml(result.html, target, cv.violation.html);
 
             if (sourceRef && config.apply) {
@@ -125,19 +123,18 @@ export async function runScan(config: RecastConfig): Promise<void> {
               }
             }
           }
-          allFlagged.push(cv);
+          allFlagged.push(updatedCv);
         }
       } else {
         allFlagged.push(...classification.low);
       }
-
-      renderer.releasePage(page);
     } catch (error) {
       console.error(`Error scanning ${target}:`, error);
+    } finally {
+      if (page) renderer.releasePage(page);
     }
   }
 
-  // Output results
   printPatchSummary(allPatches);
   printFlaggedForReview(allFlagged);
 
@@ -153,13 +150,15 @@ export async function runScan(config: RecastConfig): Promise<void> {
 
   printSummary(summary);
 
-  // Write diff output if requested
+  if (llmClient) {
+    printCostSummary(llmClient.getCostSummary());
+  }
+
   if (config.diffOutput && allPatches.length > 0) {
     const diff = generateDiff(allPatches);
     await writeFile(config.diffOutput, diff, "utf-8");
     console.log(`Diff written to ${config.diffOutput}`);
   } else if (!config.apply && allPatches.length > 0) {
-    // Print diff to stdout
     console.log("\n" + generateDiff(allPatches));
   }
 

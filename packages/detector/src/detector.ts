@@ -15,22 +15,17 @@ export interface DetectionResult {
   ariaSnapshot: string;
 }
 
-/**
- * Run all violation detection on an already-rendered page.
- * Combines axe-core results with custom checks. Deduplicates by target + ruleId.
- */
+/** Run axe-core + custom checks in parallel, deduplicate by target + ruleId. */
 export async function detect(
   page: Page,
   pageUrl: string,
 ): Promise<DetectionResult> {
-  // Run axe-core and custom checks in parallel
   const [axeViolations, customViolations, ariaSnapshot] = await Promise.all([
     runAxe(page, pageUrl),
     runCustomChecks(page, pageUrl),
     captureAriaSnapshot(page),
   ]);
 
-  // Deduplicate: custom checks may overlap with axe-core
   const seen = new Set<string>();
   const violations: Violation[] = [];
 
@@ -45,10 +40,7 @@ export async function detect(
   return { violations, ariaSnapshot };
 }
 
-/**
- * Enrich low-confidence violations with ARIA context for LLM processing.
- * Only called for violations that need LLM — saves time on high-confidence ones.
- */
+/** Enrich a violation with ARIA context for LLM processing. */
 export async function enrichViolation(
   page: Page,
   violation: Violation,
