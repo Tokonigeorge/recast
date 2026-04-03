@@ -1,0 +1,61 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1a1a1a; }
+
+/* Header */
+.header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; background: #fff; border-bottom: 1px solid #e5e5e5; }
+.logo img { height: 32px; }
+.hamburger { display: none; flex-direction: column; gap: 4px; cursor: pointer; padding: 8px; }
+.hamburger .bar { width: 20px; height: 2px; background: #333; }
+.nav-links { display: flex; gap: 24px; align-items: center; }
+.nav-links a { text-decoration: none; color: #333; font-size: 14px; font-weight: 500; }
+.cart-icon svg { width: 20px; height: 20px; fill: #333; }
+
+/* Hero */
+.hero { padding: 80px 24px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; position: relative; }
+.hero-title { font-size: 36px; margin-bottom: 12px; }
+.hero-subtitle { font-size: 18px; opacity: 0.9; margin-bottom: 32px; }
+.hero-bg { display: none; }
+.hero-video { display: none; }
+.cta-button { display: inline-block; }
+.cta-button:hover { opacity: 0.9; }
+
+/* Product Grid */
+.product-grid { padding: 48px 24px; max-width: 1100px; margin: 0 auto; }
+.product-grid > h3 { font-size: 24px; margin-bottom: 24px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 24px; }
+.product-card { border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px; cursor: pointer; transition: box-shadow 0.2s; position: relative; }
+.product-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.product-image { width: 100%; height: 180px; object-fit: cover; border-radius: 8px; background: #f5f5f5; }
+.product-name { font-size: 16px; margin: 12px 0 4px; }
+.product-price { font-size: 18px; font-weight: 700; color: #333; }
+.add-to-cart { width: 100%; margin-top: 12px; padding: 10px; background: #007bff; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
+.add-to-cart:hover { background: #0056b3; }
+.wishlist-btn { position: absolute; top: 12px; right: 12px; background: #fff; border: 1px solid #e5e5e5; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.wishlist-btn svg { width: 18px; height: 18px; fill: #ccc; }
+.wishlist-btn:hover svg { fill: #e74c3c; }
+
+/* Contact Form */
+.contact-section { padding: 48px 24px; max-width: 600px; margin: 0 auto; }
+.contact-section h4 { font-size: 24px; margin-bottom: 24px; }
+.contact-section form { display: flex; flex-direction: column; gap: 16px; }
+.contact-section input, .contact-section textarea { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; }
+.contact-section input:focus, .contact-section textarea:focus { outline: none; border-color: #007bff; }
+.contact-section button { padding: 12px; background: #007bff; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
+.contact-section .error { font-size: 12px; }
+.contact-section .clear-btn { text-align: center; margin-top: 8px; font-size: 13px; }
+.divider { display: none; }
+
+/* Footer */
+.footer { background: #1a1a1a; color: #aaa; padding: 48px 24px; margin-top: 48px; }
+.footer-links { display: flex; gap: 64px; max-width: 1100px; margin: 0 auto 32px; flex-wrap: wrap; }
+.link-group h6 { color: #fff; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+.link-group div { margin-bottom: 8px; }
+.link-group a { color: #aaa; text-decoration: none; font-size: 14px; }
+.link-group a:hover { color: #fff; }
+.status-dot { display: inline-block; width: 8px; height: 8px; background: #3fb950; border-radius: 50%; }
+.footer-bottom { max-width: 1100px; margin: 0 auto; padding-top: 24px; border-top: 1px solid #333; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
+.footer-bottom p { font-size: 13px; }
+.social-icons { display: flex; gap: 16px; }
+.social-icons a svg { width: 20px; height: 20px; fill: #aaa; }
+.social-icons a:hover svg { fill: #fff; }
+#footer-note { font-size: 12px; color: #666; }

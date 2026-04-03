@@ -1,0 +1,238 @@
+[
+  {
+    "target": "fixtures/test-page.html",
+    "violations": [
+      {
+        "ruleId": "aria-hidden-focus",
+        "description": "ARIA hidden element must not be focusable or contain focusable elements",
+        "wcag": "4.1.2",
+        "impact": "serious",
+        "html": "<a href=\"/hidden-link\" aria-hidden=\"true\">Hidden but focusable</a>",
+        "target": "a[href$=\"hidden-link\"]",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/aria-hidden-focus?application=axeAPI",
+        "pageUrl": "file://fixtures/test-page.html"
+      },
+      {
+        "ruleId": "button-name",
+        "description": "Buttons must have discernible text",
+        "wcag": "4.1.2",
+        "impact": "critical",
+        "html": "<button class=\"icon-btn\">\n      <svg aria-hidden=\"true\"><path d=\"M6 6L18 18M6 18L18 6\"></path></svg>\n    </button>",
+        "target": ".icon-btn",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=axeAPI",
+        "pageUrl": "file://fixtures/test-page.html"
+      },
+      {
+        "ruleId": "html-has-lang",
+        "description": "<html> element must have a lang attribute",
+        "wcag": "3.1.1",
+        "impact": "serious",
+        "html": "<html>",
+        "target": "html",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/html-has-lang?application=axeAPI",
+        "pageUrl": "file://fixtures/test-page.html"
+      },
+      {
+        "ruleId": "image-alt",
+        "description": "Images must have alternative text",
+        "wcag": "1.1.1",
+        "impact": "critical",
+        "html": "<img src=\"hero.jpg\">",
+        "target": "img[src$=\"hero.jpg\"]",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/image-alt?application=axeAPI",
+        "pageUrl": "file://fixtures/test-page.html"
+      },
+      {
+        "ruleId": "target-size",
+        "description": "All touch targets must be 24px large, or leave sufficient space",
+        "wcag": "2.5.8",
+        "impact": "serious",
+        "html": "<input type=\"email\" id=\"email\" name=\"email\">",
+        "target": "#email",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/target-size?application=axeAPI",
+        "pageUrl": "file://fixtures/test-page.html"
+      },
+      {
+        "ruleId": "click-without-keyboard",
+        "description": "Element has onClick handler but no keyboard equivalent or ARIA role",
+        "wcag": "2.1.1 Keyboard",
+        "impact": "serious",
+        "html": "<div class=\"card\" onclick=\"openCard()\">\n      <p>Click to open this card</p>\n    </div>",
+        "target": "main > div:nth-of-type(1)",
+        "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html",
+        "pageUrl": "file://fixtures/test-page.html"
+      },
+      {
+        "ruleId": "heading-order",
+        "description": "Heading level skipped: h1 → h3 (missing h2)",
+        "wcag": "1.3.1 Info and Relationships",
+        "impact": "moderate",
+        "html": "<h3>Features</h3>",
+        "target": "main > h3",
+        "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships.html",
+        "pageUrl": "file://fixtures/test-page.html"
+      },
+      {
+        "ruleId": "aria-labelledby-broken",
+        "description": "aria-labelledby references non-existent id=\"nonexistent-id\"",
+        "wcag": "1.3.1 Info and Relationships",
+        "impact": "critical",
+        "html": "<section aria-labelledby=\"nonexistent-id\">\n      <p>This section references an ID that doesn't exist.</p>\n    </section>",
+        "target": "main > section",
+        "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships.html",
+        "pageUrl": "file://fixtures/test-page.html"
+      },
+      {
+        "ruleId": "button-has-type",
+        "description": "Button inside form has no type attribute — defaults to \"submit\"",
+        "wcag": "3.2.2 On Input",
+        "impact": "moderate",
+        "html": "<button>Cancel</button>",
+        "target": "main > form > button:nth-of-type(1)",
+        "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/on-input.html",
+        "pageUrl": "file://fixtures/test-page.html"
+      }
+    ],
+    "high": [
+      {
+        "violation": {
+          "ruleId": "aria-hidden-focus",
+          "description": "ARIA hidden element must not be focusable or contain focusable elements",
+          "wcag": "4.1.2",
+          "impact": "serious",
+          "html": "<a href=\"/hidden-link\" aria-hidden=\"true\">Hidden but focusable</a>",
+          "target": "a[href$=\"hidden-link\"]",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/aria-hidden-focus?application=axeAPI",
+          "pageUrl": "file://fixtures/test-page.html"
+        },
+        "fix": {
+          "type": "add-attribute",
+          "reasoning": "aria-hidden on focusable element — adding tabindex=\"-1\"",
+          "confidence": 0.85,
+          "attribute": "tabindex",
+          "value": "-1"
+        }
+      },
+      {
+        "violation": {
+          "ruleId": "html-has-lang",
+          "description": "<html> element must have a lang attribute",
+          "wcag": "3.1.1",
+          "impact": "serious",
+          "html": "<html>",
+          "target": "html",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/html-has-lang?application=axeAPI",
+          "pageUrl": "file://fixtures/test-page.html"
+        },
+        "fix": {
+          "type": "add-attribute",
+          "reasoning": "HTML element missing lang attribute",
+          "confidence": 1,
+          "attribute": "lang",
+          "value": "en"
+        }
+      },
+      {
+        "violation": {
+          "ruleId": "aria-labelledby-broken",
+          "description": "aria-labelledby references non-existent id=\"nonexistent-id\"",
+          "wcag": "1.3.1 Info and Relationships",
+          "impact": "critical",
+          "html": "<section aria-labelledby=\"nonexistent-id\">\n      <p>This section references an ID that doesn't exist.</p>\n    </section>",
+          "target": "main > section",
+          "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships.html",
+          "pageUrl": "file://fixtures/test-page.html"
+        },
+        "fix": {
+          "type": "remove-attribute",
+          "reasoning": "aria-labelledby references non-existent id=\"nonexistent-id\" — removing broken reference",
+          "confidence": 1,
+          "attribute": "aria-labelledby"
+        }
+      },
+      {
+        "violation": {
+          "ruleId": "button-has-type",
+          "description": "Button inside form has no type attribute — defaults to \"submit\"",
+          "wcag": "3.2.2 On Input",
+          "impact": "moderate",
+          "html": "<button>Cancel</button>",
+          "target": "main > form > button:nth-of-type(1)",
+          "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/on-input.html",
+          "pageUrl": "file://fixtures/test-page.html"
+        },
+        "fix": {
+          "type": "add-attribute",
+          "reasoning": "Button in form defaults to type=\"submit\" — adding explicit type=\"button\"",
+          "confidence": 0.95,
+          "attribute": "type",
+          "value": "button"
+        }
+      }
+    ],
+    "low": [
+      {
+        "violation": {
+          "ruleId": "button-name",
+          "description": "Buttons must have discernible text",
+          "wcag": "4.1.2",
+          "impact": "critical",
+          "html": "<button class=\"icon-btn\">\n      <svg aria-hidden=\"true\"><path d=\"M6 6L18 18M6 18L18 6\"></path></svg>\n    </button>",
+          "target": ".icon-btn",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=axeAPI",
+          "pageUrl": "file://fixtures/test-page.html"
+        }
+      },
+      {
+        "violation": {
+          "ruleId": "image-alt",
+          "description": "Images must have alternative text",
+          "wcag": "1.1.1",
+          "impact": "critical",
+          "html": "<img src=\"hero.jpg\">",
+          "target": "img[src$=\"hero.jpg\"]",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/image-alt?application=axeAPI",
+          "pageUrl": "file://fixtures/test-page.html"
+        }
+      },
+      {
+        "violation": {
+          "ruleId": "click-without-keyboard",
+          "description": "Element has onClick handler but no keyboard equivalent or ARIA role",
+          "wcag": "2.1.1 Keyboard",
+          "impact": "serious",
+          "html": "<div class=\"card\" onclick=\"openCard()\">\n      <p>Click to open this card</p>\n    </div>",
+          "target": "main > div:nth-of-type(1)",
+          "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html",
+          "pageUrl": "file://fixtures/test-page.html"
+        }
+      },
+      {
+        "violation": {
+          "ruleId": "heading-order",
+          "description": "Heading level skipped: h1 → h3 (missing h2)",
+          "wcag": "1.3.1 Info and Relationships",
+          "impact": "moderate",
+          "html": "<h3>Features</h3>",
+          "target": "main > h3",
+          "helpUrl": "https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships.html",
+          "pageUrl": "file://fixtures/test-page.html"
+        }
+      }
+    ],
+    "skipped": [
+      {
+        "violation": {
+          "ruleId": "target-size",
+          "description": "All touch targets must be 24px large, or leave sufficient space",
+          "wcag": "2.5.8",
+          "impact": "serious",
+          "html": "<input type=\"email\" id=\"email\" name=\"email\">",
+          "target": "#email",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/target-size?application=axeAPI",
+          "pageUrl": "file://fixtures/test-page.html"
+        }
+      }
+    ]
+  }
+]

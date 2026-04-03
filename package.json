@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit -b packages/*/tsconfig.json",
-    "test:real": "pnpm tsx packages/cli/src/test-real-sites.ts"
+    "test:real": "pnpm tsx packages/cli/src/test-real-sites.ts",
+    "recast": "pnpm tsx packages/cli/src/bin.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
