@@ -1,7 +1,6 @@
 import type { Fix, SourceRef } from "@recast-a11y/classifier";
 import { escapeRegex } from "./shared.js";
 
-/** Apply a fix to a JSX/TSX file. Returns modified contents or null. */
 export function patchJsx(
   fileContents: string,
   sourceRef: SourceRef,
@@ -33,28 +32,70 @@ function htmlAttrToJsx(attr: string): string {
   return HTML_TO_JSX_ATTRS[attr] ?? attr;
 }
 
+/** Find the line that closes the opening tag starting at lineIdx (handles multi-line). */
+function findTagCloseInfo(lines: string[], lineIdx: number): { closeLine: number; closeCol: number } | null {
+  let inString: string | null = null;
+  let braceDepth = 0;
+  let foundTag = false;
+
+  for (let ln = lineIdx; ln < Math.min(lineIdx + 20, lines.length); ln++) {
+    const line = lines[ln];
+    const startCol = ln === lineIdx ? 0 : 0;
+
+    for (let i = startCol; i < line.length; i++) {
+      const ch = line[i];
+
+      if (inString) {
+        if (ch === inString && line[i - 1] !== "\\") inString = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'") { inString = ch; continue; }
+      if (ch === "`") { inString = ch; continue; }
+      if (ch === "{") { braceDepth++; continue; }
+      if (ch === "}") { braceDepth--; continue; }
+
+      if (ch === "<" && !foundTag) { foundTag = true; continue; }
+
+      if (braceDepth === 0 && foundTag) {
+        if (ch === "/" && line[i + 1] === ">") return { closeLine: ln, closeCol: i };
+        if (ch === ">" && (i === 0 || line[i - 1] !== "=")) return { closeLine: ln, closeCol: i };
+      }
+    }
+  }
+
+  return null;
+}
+
 function addJsxAttribute(lines: string[], lineIdx: number, fix: Fix): string | null {
   if (!fix.attribute || fix.value === undefined) return null;
 
-  const line = lines[lineIdx];
   const jsxAttr = htmlAttrToJsx(fix.attribute);
   const attrStr = `${jsxAttr}="${fix.value}"`;
 
+  // Check if attribute already exists on any line of the opening tag
   const existingPattern = new RegExp(
     `\\b${escapeRegex(jsxAttr)}\\s*=\\s*(?:"[^"]*"|'[^']*'|\\{[^}]*\\})`,
   );
 
-  let newLine: string;
-  if (existingPattern.test(line)) {
-    newLine = line.replace(existingPattern, attrStr);
-  } else {
-    const insertIdx = findTagInsertionPoint(line);
-    if (insertIdx === -1) return null;
-    newLine = line.slice(0, insertIdx) + ` ${attrStr}` + line.slice(insertIdx);
+  const result = [...lines];
+
+  // Search across the tag span for existing attribute
+  const closeInfo = findTagCloseInfo(lines, lineIdx);
+  const searchEnd = closeInfo ? closeInfo.closeLine : lineIdx;
+
+  for (let ln = lineIdx; ln <= searchEnd; ln++) {
+    if (existingPattern.test(result[ln])) {
+      result[ln] = result[ln].replace(existingPattern, attrStr);
+      return result.join("\n");
+    }
   }
 
-  const result = [...lines];
-  result[lineIdx] = newLine;
+  // Attribute doesn't exist — insert before the closing > or />
+  if (!closeInfo) return null;
+
+  const { closeLine, closeCol } = closeInfo;
+  const line = result[closeLine];
+  result[closeLine] = line.slice(0, closeCol) + ` ${attrStr}` + line.slice(closeCol);
   return result.join("\n");
 }
 
@@ -62,18 +103,25 @@ function removeJsxAttribute(lines: string[], lineIdx: number, fix: Fix): string 
   if (!fix.attribute) return null;
 
   const jsxAttr = htmlAttrToJsx(fix.attribute);
-  const line = lines[lineIdx];
   const attrPattern = new RegExp(
     `\\s*${escapeRegex(jsxAttr)}\\s*=\\s*(?:"[^"]*"|'[^']*'|\\{[^}]*\\})`,
     "g",
   );
 
-  const newLine = line.replace(attrPattern, "");
-  if (newLine === line) return null;
-
   const result = [...lines];
-  result[lineIdx] = newLine;
-  return result.join("\n");
+  const closeInfo = findTagCloseInfo(lines, lineIdx);
+  const searchEnd = closeInfo ? closeInfo.closeLine : lineIdx;
+  let changed = false;
+
+  for (let ln = lineIdx; ln <= searchEnd; ln++) {
+    const newLine = result[ln].replace(attrPattern, "");
+    if (newLine !== result[ln]) {
+      result[ln] = newLine;
+      changed = true;
+    }
+  }
+
+  return changed ? result.join("\n") : null;
 }
 
 function changeJsxElement(
@@ -105,29 +153,4 @@ function changeJsxElement(
   }
 
   return result.join("\n");
-}
-
-/** Find the position right before > or /> in a JSX opening tag. */
-function findTagInsertionPoint(line: string): number {
-  let inString: string | null = null;
-  let braceDepth = 0;
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-
-    if (inString) {
-      if (ch === inString && line[i - 1] !== "\\") inString = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") { inString = ch; continue; }
-    if (ch === "{") { braceDepth++; continue; }
-    if (ch === "}") { braceDepth--; continue; }
-
-    if (braceDepth === 0) {
-      if (ch === "/" && line[i + 1] === ">") return i;
-      if (ch === ">" && (i === 0 || line[i - 1] !== "=")) return i;
-    }
-  }
-
-  return -1;
 }

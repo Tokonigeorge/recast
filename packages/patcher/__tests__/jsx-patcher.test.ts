@@ -101,4 +101,70 @@ describe("patchJsx", () => {
     );
     expect(result).not.toContain("aria-labelledby");
   });
+
+  it("adds attribute to multi-line JSX element", () => {
+    const jsx = [
+      "function App() {",
+      "  return (",
+      "    <div",
+      '      className="card"',
+      "      onClick={handleClick}",
+      "    >",
+      "      Content",
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const fix: Fix = {
+      type: "add-attribute",
+      attribute: "role",
+      value: "button",
+      reasoning: "needs role",
+      confidence: 0.9,
+    };
+
+    const result = patchJsx(jsx, makeSourceRef(3), '<div class="card">', fix);
+    expect(result).not.toBeNull();
+    expect(result).toContain('role="button"');
+  });
+
+  it("removes attribute from multi-line JSX element", () => {
+    const jsx = [
+      "<section",
+      '  aria-labelledby="missing-id"',
+      '  className="content"',
+      ">",
+    ].join("\n");
+    const fix: Fix = {
+      type: "remove-attribute",
+      attribute: "aria-labelledby",
+      reasoning: "broken ref",
+      confidence: 1.0,
+    };
+
+    const result = patchJsx(jsx, makeSourceRef(1), '<section aria-labelledby="missing-id">', fix);
+    expect(result).not.toBeNull();
+    expect(result).not.toContain("aria-labelledby");
+    expect(result).toContain("className");
+  });
+
+  it("adds attribute to self-closing multi-line element", () => {
+    const jsx = [
+      "<img",
+      '  src={product.img}',
+      '  className="product-image"',
+      "/>",
+    ].join("\n");
+    const fix: Fix = {
+      type: "add-attribute",
+      attribute: "alt",
+      value: "Product photo",
+      reasoning: "needs alt",
+      confidence: 0.95,
+    };
+
+    const result = patchJsx(jsx, makeSourceRef(1), '<img src="product.jpg">', fix);
+    expect(result).not.toBeNull();
+    expect(result).toContain('alt="Product photo"');
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseLlmOutput } from "../src/parser.js";
+import { parseLlmOutput, parseBatchOutput } from "../src/parser.js";
 
 describe("parseLlmOutput", () => {
   it("parses a well-formed add-attribute fix", () => {
@@ -79,5 +79,67 @@ fix:
     const fix = parseLlmOutput(output);
     expect(fix.attribute).toBe("aria-label");
     expect(fix.value).toBe("Submit form");
+  });
+});
+
+describe("parseBatchOutput", () => {
+  it("parses multiple fix blocks", () => {
+    const output = `
+Violation 1: The button needs a label.
+
+fix_1:
+  type: add-attribute
+  attribute: aria-label
+  value: Add to Wishlist
+  reasoning: Icon-only button needs label
+  confidence: 0.95
+
+Violation 2: The image needs alt text.
+
+fix_2:
+  type: add-attribute
+  attribute: alt
+  value: Product photo
+  reasoning: Meaningful image needs description
+  confidence: 0.90
+
+Violation 3: Complex widget needs restructuring.
+
+fix_3:
+  type: manual-required
+  note: Add keyboard navigation
+  reasoning: Tree view requires full ARIA pattern
+  confidence: 0.40
+`;
+
+    const fixes = parseBatchOutput(output, 3);
+    expect(fixes).toHaveLength(3);
+
+    expect(fixes[0].type).toBe("add-attribute");
+    expect(fixes[0].attribute).toBe("aria-label");
+    expect(fixes[0].value).toBe("Add to Wishlist");
+    expect(fixes[0].confidence).toBe(0.95);
+
+    expect(fixes[1].type).toBe("add-attribute");
+    expect(fixes[1].attribute).toBe("alt");
+    expect(fixes[1].confidence).toBe(0.90);
+
+    expect(fixes[2].type).toBe("manual-required");
+    expect(fixes[2].note).toBe("Add keyboard navigation");
+  });
+
+  it("handles missing blocks gracefully", () => {
+    const output = `fix_1:
+  type: add-attribute
+  attribute: alt
+  value: Logo
+  reasoning: needs alt
+  confidence: 0.9`;
+
+    const fixes = parseBatchOutput(output, 3);
+    expect(fixes).toHaveLength(3);
+    expect(fixes[0].type).toBe("add-attribute");
+    expect(fixes[1].confidence).toBe(0);
+    expect(fixes[2].confidence).toBe(0);
   });
 });

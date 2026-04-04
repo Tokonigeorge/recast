@@ -1,24 +1,18 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Page } from "playwright";
 import type { SourceRef } from "@recast-a11y/classifier";
 
-/**
- * Source tracing: find the original source file + line for a DOM element.
- * Follows the priority chain from the architecture doc:
- * 1. Domscribe data-ds stamp (most reliable)
- * 2. Sourcemap tracing via CDP
- * 3. Framework fiber walking (React __reactFiber, Vue __vue__)
- * 4. null (flag for manual location)
- */
+/** Trace a DOM element back to its source file via React fiber _debugStack, Domscribe stamp, or Vue internals. */
 export async function traceToSource(
   page: Page,
   target: string,
 ): Promise<SourceRef | null> {
-  // Try all methods inside the browser context
-  const ref = await page.evaluate((selector: string) => {
+  return page.evaluate((selector: string) => {
     const el = document.querySelector(selector);
     if (!el) return null;
 
-    // Method 1: Domscribe stamp
+    // 1. Domscribe stamp
     const stamp = el.getAttribute("data-ds");
     if (stamp) {
       const [file, lineStr] = stamp.split(":");
@@ -26,30 +20,35 @@ export async function traceToSource(
       if (file && !isNaN(line)) return { file, line };
     }
 
-    // Method 3: React fiber (dev mode)
+    // 2. React fiber _debugStack (React 19+)
     const fiberKey = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
     if (fiberKey) {
-      const fiber = (el as unknown as Record<string, unknown>)[fiberKey] as Record<string, unknown> | undefined;
-      if (fiber) {
-        // Walk up to find _debugSource
-        let current: Record<string, unknown> | undefined = fiber;
-        for (let i = 0; i < 10 && current; i++) {
-          const source = current._debugSource as
-            | { fileName: string; lineNumber: number; columnNumber?: number }
-            | undefined;
-          if (source?.fileName) {
-            return {
-              file: source.fileName,
-              line: source.lineNumber,
-              column: source.columnNumber,
-            };
+      let current = (el as unknown as Record<string, unknown>)[fiberKey] as Record<string, unknown> | undefined;
+      for (let i = 0; i < 10 && current; i++) {
+        const debugStack = current._debugStack as { stack?: string } | undefined;
+        if (debugStack?.stack) {
+          const match = debugStack.stack.match(/at \w+ \((http[^)]+):(\d+):(\d+)\)/);
+          if (match) {
+            try {
+              const pathname = new URL(match[1]).pathname;
+              return { file: pathname, line: parseInt(match[2], 10), column: parseInt(match[3], 10) };
+            } catch {
+              return { file: match[1], line: parseInt(match[2], 10), column: parseInt(match[3], 10) };
+            }
           }
-          current = current.return as Record<string, unknown> | undefined;
         }
+
+        // React 18: _debugSource
+        const source = current._debugSource as { fileName?: string; lineNumber?: number; columnNumber?: number } | undefined;
+        if (source?.fileName) {
+          return { file: source.fileName, line: source.lineNumber ?? 1, column: source.columnNumber };
+        }
+
+        current = current.return as Record<string, unknown> | undefined;
       }
     }
 
-    // Method 3b: Vue __vue__
+    // 3. Vue __vue__
     const vueInst = (el as unknown as Record<string, unknown>).__vue__ as
       | { $options?: { __file?: string } }
       | undefined;
@@ -59,14 +58,37 @@ export async function traceToSource(
 
     return null;
   }, target);
-
-  return ref;
 }
 
 /**
- * Trace source for static HTML files — the file IS the source.
- * Match the element in the raw HTML to find the line number.
+ * Resolve a traced source path (e.g. /src/components/Header.jsx) to an absolute path.
+ * Searches projectRoot first, then subdirectories with package.json if not found.
  */
+export function resolveSourcePath(tracedFile: string, projectRoot: string): string {
+  // Already absolute and exists
+  if (!tracedFile.startsWith("/src/") && !tracedFile.startsWith("/app/") && !tracedFile.startsWith("/lib/")) {
+    if (existsSync(tracedFile)) return tracedFile;
+  }
+
+  // Direct: projectRoot + tracedFile
+  const direct = join(projectRoot, tracedFile);
+  if (existsSync(direct)) return direct;
+
+  // Search subdirectories for the file (handles monorepos where cwd != project root)
+  try {
+    const entries = require("node:fs").readdirSync(projectRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (["node_modules", ".git", "dist", "build"].includes(entry.name)) continue;
+      const candidate = join(projectRoot, entry.name, tracedFile);
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch {}
+
+  return direct;
+}
+
+/** Trace source for static HTML files — the file IS the source. */
 export function traceInStaticHtml(
   html: string,
   filePath: string,
@@ -74,7 +96,6 @@ export function traceInStaticHtml(
 ): SourceRef | null {
   const lines = html.split("\n");
 
-  // Strategy 1: Match the full opening tag pattern (tag + attributes)
   const tagWithAttrs = elementHtml.match(/<(\w+)\s+([^>]*)/);
   if (tagWithAttrs) {
     const searchPattern = tagWithAttrs[0];
@@ -85,7 +106,6 @@ export function traceInStaticHtml(
     }
   }
 
-  // Strategy 2: Match by distinctive attribute (id, class, aria-*)
   const attrMatch = elementHtml.match(/<\w+[^>]*(?:id|class|aria-)=["'][^"']+["']/);
   if (attrMatch) {
     for (let i = 0; i < lines.length; i++) {
@@ -95,14 +115,11 @@ export function traceInStaticHtml(
     }
   }
 
-  // Strategy 3: Match bare tag (e.g., <html>, <body>) — for elements with no attributes
   const bareTag = elementHtml.match(/<(\w+)\s*>/);
   if (bareTag) {
     const tag = bareTag[1];
     for (let i = 0; i < lines.length; i++) {
-      // Match the bare opening tag, not a closing tag or a tag with attributes
-      const lineMatch = lines[i].match(new RegExp(`<${tag}(?:\\s*>|\\s+)`));
-      if (lineMatch) {
+      if (lines[i].match(new RegExp(`<${tag}(?:\\s*>|\\s+)`))) {
         return { file: filePath, line: i + 1 };
       }
     }

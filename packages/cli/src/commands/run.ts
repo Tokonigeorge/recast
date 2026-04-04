@@ -1,5 +1,5 @@
-import { readFile, readdir } from "node:fs/promises";
-import { join, extname } from "node:path";
+import { readFile, readdir, access } from "node:fs/promises";
+import { join, extname, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import type { Page } from "playwright";
 import { Renderer } from "@recast-a11y/renderer";
@@ -7,8 +7,8 @@ import { detect, enrichViolation } from "@recast-a11y/detector";
 import { classify } from "@recast-a11y/classifier";
 import type { ClassifiedViolation, Patch } from "@recast-a11y/classifier";
 import { LlmClient, detectProvider } from "@recast-a11y/llm";
-import { traceInStaticHtml } from "@recast-a11y/tracer";
-import { patchHtml, writePatch } from "@recast-a11y/patcher";
+import { traceToSource, traceInStaticHtml, resolveSourcePath } from "@recast-a11y/tracer";
+import { patchHtml, patchJsx, writePatch } from "@recast-a11y/patcher";
 import { printCostSummary, buildReportData, generateHtmlReport, serveReport } from "@recast-a11y/reporter";
 import type { RecastConfig } from "../config.js";
 import {
@@ -158,13 +158,65 @@ export async function run(config: RecastConfig): Promise<void> {
       }
 
       // ── 3. Build all patches ──
+      const projectRoot = config.projectRoot
+        ? resolve(config.projectRoot)
+        : process.cwd();
       const allPatchData: Array<{ cv: ClassifiedViolation; patch: Patch }> = [];
+
       for (const cv of allFixable) {
-        const sourceRef = traceInStaticHtml(html, target, cv.violation.html);
+        let sourceRef;
+
+        if (isUrl) {
+          // Trace from rendered DOM to source file via React fiber / Domscribe
+          const traced = await traceToSource(p, cv.violation.target);
+          if (traced) {
+            const resolvedFile = resolveSourcePath(traced.file, projectRoot);
+            try {
+              // Fiber gives us the file but line may point to the component, not the element.
+              // Re-trace within the source file using pattern matching for the exact line.
+              const sourceContents = await readFile(resolvedFile, "utf-8");
+              const elementRef = traceInStaticHtml(sourceContents, resolvedFile, cv.violation.html);
+              // Also try JSX equivalents: class→className, for→htmlFor
+              const jsxHtml = cv.violation.html
+                .replace(/\bclass="/g, 'className="')
+                .replace(/\bfor="/g, 'htmlFor="');
+              const jsxRef = elementRef ?? traceInStaticHtml(sourceContents, resolvedFile, jsxHtml);
+              sourceRef = jsxRef ?? { file: resolvedFile, line: traced.line };
+            } catch {
+              sourceRef = { file: resolvedFile, line: traced.line };
+            }
+          }
+        } else {
+          sourceRef = traceInStaticHtml(html, target, cv.violation.html);
+        }
+
         if (!sourceRef) continue;
-        const patched = patchHtml(html, sourceRef, cv.violation.html, cv.fix);
-        if (!patched || patched === html) continue;
-        const { original, fixed } = conciseDiff(html, sourceRef, cv.violation.html, cv.fix);
+
+        // For JSX source files, read the actual file and patch it
+        let original: string;
+        let fixed: string;
+
+        if (isUrl && sourceRef.file !== target) {
+          try {
+            const sourceContents = await readFile(sourceRef.file, "utf-8");
+            const ext = sourceRef.file.match(/\.(jsx|tsx|js|ts)$/i);
+            const patched = ext
+              ? patchJsx(sourceContents, sourceRef, cv.violation.html, cv.fix)
+              : patchHtml(sourceContents, sourceRef, cv.violation.html, cv.fix);
+            if (!patched || patched === sourceContents) continue;
+            original = sourceContents.split("\n")[sourceRef.line - 1]?.trim() ?? "";
+            fixed = patched.split("\n")[sourceRef.line - 1]?.trim() ?? "";
+          } catch {
+            continue; // file not found — skip this patch
+          }
+        } else {
+          const patched = patchHtml(html, sourceRef, cv.violation.html, cv.fix);
+          if (!patched || patched === html) continue;
+          const d = conciseDiff(html, sourceRef, cv.violation.html, cv.fix);
+          original = d.original;
+          fixed = d.fixed;
+        }
+
         allPatchData.push({
           cv,
           patch: { sourceRef, violation: cv.violation, fix: cv.fix, originalCode: original, fixedCode: fixed },
@@ -222,9 +274,10 @@ export async function run(config: RecastConfig): Promise<void> {
         printDiffBlock(patch.originalCode, patch.fixedCode, patch.sourceRef.file, patch.sourceRef.line);
       }
 
-      // ── 7. Apply (local files only — URLs can't be patched) ──
-      if (isUrl) {
-        console.log(`  ${D}Scanning a URL — diffs shown above. To apply, run recast against local source files.${R}\n`);
+      // ── 7. Apply ──
+      if (isUrl && allPatchData.length === 0) {
+        console.log(`  ${D}Could not trace URL violations to local source files.${R}`);
+        console.log(`  ${D}Use --project-root to specify the project directory.${R}\n`);
         continue;
       }
 

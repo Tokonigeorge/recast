@@ -1,1 +1,1 @@
-export { traceToSource, traceInStaticHtml } from "./tracer.js";
+export { traceToSource, traceInStaticHtml, resolveSourcePath } from "./tracer.js";

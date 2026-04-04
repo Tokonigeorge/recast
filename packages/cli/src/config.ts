@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 
 export interface RecastConfig {
   targets: string[];
+  projectRoot?: string;
   autoFixAbove: number;
   provider?: string;
   apiKey?: string;
@@ -18,6 +19,7 @@ export function parseConfig(args: string[]): RecastConfig {
       provider: { type: "string", short: "p" },
       "api-key": { type: "string", short: "k" },
       model: { type: "string", short: "m" },
+      "project-root": { type: "string", short: "r" },
       concurrency: { type: "string", default: "4" },
       timeout: { type: "string", default: "15000" },
       help: { type: "boolean", short: "h" },
@@ -33,12 +35,13 @@ export function parseConfig(args: string[]): RecastConfig {
 
   return {
     targets: positionals,
+    projectRoot: values["project-root"] as string | undefined,
     autoFixAbove: parseFloat(values["auto-fix-above"] as string) || 0.85,
     provider: values.provider as string | undefined,
     apiKey: values["api-key"] as string | undefined,
     model: values.model as string | undefined,
     concurrency: parseInt(values.concurrency as string, 10) || 4,
-    timeout: parseInt(values.timeout as string, 10) || 15_000,
+    timeout: parseInt(values.timeout as string, 10) || 30_000,
   };
 }
 

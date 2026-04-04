@@ -61,3 +61,47 @@ ${v.ariaContext}
 
 Reason through the fix step by step, then output the YAML.`;
 }
+
+/** Build a batched prompt for multiple violations. Each fix block is tagged with an index. */
+export function buildBatchPrompt(violations: EnrichedViolation[]): string {
+  const parts = violations.map((v, i) => `--- Violation ${i + 1} ---
+<violation>
+  rule: ${v.ruleId}
+  impact: ${v.impact}
+  wcag: ${v.wcag}
+  description: ${v.description}
+</violation>
+
+<element>
+${v.html}
+</element>
+
+<aria_context>
+${v.ariaContext}
+</aria_context>
+
+<page_context>
+  section: ${v.section}
+  page_title: ${v.pageTitle}
+</page_context>`);
+
+  return parts.join("\n\n") + `
+
+For each violation above, reason through the fix, then output a YAML block tagged with the violation number:
+
+fix_1:
+  type: ...
+  ...
+
+fix_2:
+  type: ...
+  ...
+
+And so on for all ${violations.length} violations.`;
+}
+
+export const BATCH_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
+  "Output format — always end your response with this YAML block:",
+  "Output format — for each violation, output a YAML block tagged with the violation number (fix_1, fix_2, etc.):",
+).replace("fix:\n", "fix_N:\n");
+
