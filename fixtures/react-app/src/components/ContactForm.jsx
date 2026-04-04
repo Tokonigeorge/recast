@@ -46,7 +46,7 @@ export default function ContactForm() {
         />
 
         {/* VIOLATION: button in form with no type attribute */}
-        <button>Send Message</button>
+        <button type="button">Send Message</button>
 
         {/* VIOLATION: div styled as button for "clear" action */}
         <div

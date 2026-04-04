@@ -8,8 +8,8 @@ export default function Header() {
       {/* VIOLATION: div used as nav, no landmark role */}
       <div className="logo">
         {/* VIOLATION: image used as link but no alt text */}
-        <a href="/">
-          <img src="/logo.png" />
+        <a href="/" alt="Logo for Example Store">
+          <img src="/logo.png"  alt="Company logo"/>
         </a>
       </div>
 
@@ -30,7 +30,7 @@ export default function Header() {
         <a href="/contact">Contact</a>
 
         {/* VIOLATION: empty link — icon-only, no accessible name */}
-        <a href="/cart" className="cart-icon">
+        <a href="/cart" className="cart-icon" aria-label="Shopping cart">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2z" />
           </svg>
