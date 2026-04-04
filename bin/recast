@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Load .env from recast project dir if it exists
+if [ -f "$DIR/.env" ]; then
+  set -a
+  source "$DIR/.env"
+  set +a
+fi
+exec "$DIR/node_modules/.bin/tsx" "$DIR/packages/cli/src/bin.ts" "$@"

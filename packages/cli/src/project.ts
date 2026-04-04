@@ -1,6 +1,7 @@
-import { readFile, access } from "node:fs/promises";
+import { readFile, access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
+import { tmpdir } from "node:os";
+import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 
 export interface ProjectInfo {
@@ -79,8 +80,7 @@ export async function startDevServer(project: ProjectInfo): Promise<{ process: C
     env: { ...process.env, PORT: String(project.port), BROWSER: "none" },
   });
 
-  // Wait for the server to be ready by polling the port
-  await waitForPort(project.port, 30_000);
+  await waitForPort(project.port, 60_000);
 
   return { process: child, url: project.url };
 }
@@ -91,6 +91,76 @@ export function stopDevServer(child: ChildProcess): void {
   setTimeout(() => {
     if (!child.killed) child.kill("SIGKILL");
   }, 3000);
+}
+
+export interface ClonedProject {
+  root: string;
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * Parse a GitHub shorthand and clone the repo.
+ * Supports: github:user/repo, github.com/user/repo, https://github.com/user/repo
+ */
+export function parseGitHubTarget(target: string): { repo: string; url: string } | null {
+  // github:user/repo
+  if (target.startsWith("github:")) {
+    const repo = target.slice(7);
+    return { repo, url: `https://github.com/${repo}.git` };
+  }
+  // https://github.com/user/repo or github.com/user/repo
+  const match = target.match(/(?:https?:\/\/)?github\.com\/([^/]+\/[^/\s]+)/);
+  if (match) {
+    const repo = match[1].replace(/\.git$/, "");
+    return { repo, url: `https://github.com/${repo}.git` };
+  }
+  return null;
+}
+
+export async function cloneAndInstall(
+  gitUrl: string,
+  onProgress?: (msg: string) => void,
+): Promise<ClonedProject> {
+  const tmpBase = await mkdtemp(join(tmpdir(), "recast-"));
+  const projectDir = join(tmpBase, "repo");
+
+  onProgress?.("Cloning repository");
+  execSync(`git clone --depth 1 ${gitUrl} "${projectDir}"`, {
+    stdio: "pipe",
+    timeout: 60_000,
+  });
+
+  onProgress?.("Installing dependencies");
+  // Detect package manager
+  const hasYarnLock = await access(join(projectDir, "yarn.lock")).then(() => true, () => false);
+  const hasPnpmLock = await access(join(projectDir, "pnpm-lock.yaml")).then(() => true, () => false);
+
+  const installCmd = hasPnpmLock ? "pnpm install --frozen-lockfile"
+    : hasYarnLock ? "yarn install --frozen-lockfile"
+    : "npm install";
+
+  try {
+    execSync(installCmd, {
+      cwd: projectDir,
+      stdio: "pipe",
+      timeout: 120_000,
+    });
+  } catch {
+    // Frozen lockfile might fail — retry without
+    const fallback = hasPnpmLock ? "pnpm install --no-frozen-lockfile"
+      : hasYarnLock ? "yarn install"
+      : "npm install";
+    execSync(fallback, {
+      cwd: projectDir,
+      stdio: "pipe",
+      timeout: 120_000,
+    });
+  }
+
+  return {
+    root: projectDir,
+    cleanup: async () => { await rm(tmpBase, { recursive: true, force: true }); },
+  };
 }
 
 async function findFreePort(): Promise<number> {

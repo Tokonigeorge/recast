@@ -3,7 +3,7 @@ import { join, extname, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import type { Page } from "playwright";
-import { Renderer } from "@recast-a11y/renderer";
+import { Renderer, discoverLinks } from "@recast-a11y/renderer";
 import { detect, enrichViolation } from "@recast-a11y/detector";
 import { classify } from "@recast-a11y/classifier";
 import type { ClassifiedViolation, Patch } from "@recast-a11y/classifier";
@@ -12,7 +12,7 @@ import { traceToSource, traceInStaticHtml, resolveSourcePath } from "@recast-a11
 import { patchHtml, patchJsx, writePatch } from "@recast-a11y/patcher";
 import { printCostSummary, buildReportData, generateHtmlReport, serveReport } from "@recast-a11y/reporter";
 import type { RecastConfig } from "../config.js";
-import { detectProject, startDevServer, stopDevServer } from "../project.js";
+import { detectProject, startDevServer, stopDevServer, parseGitHubTarget, cloneAndInstall, type ClonedProject } from "../project.js";
 import {
   spinner, confirm, waitForEnter,
   printDiffBlock, printHeader, printViolationTable,
@@ -32,13 +32,43 @@ interface ScanTarget {
   projectRoot: string;
   isUrl: boolean;
   serverProcess?: ChildProcess;
+  clonedProject?: ClonedProject;
 }
 
 async function resolveTargets(rawTargets: string[], configRoot?: string): Promise<ScanTarget[]> {
   const targets: ScanTarget[] = [];
 
   for (const t of rawTargets) {
-    // Already a URL
+    // GitHub shorthand: github:user/repo or https://github.com/user/repo
+    const gh = parseGitHubTarget(t);
+    if (gh) {
+      let cloned: ClonedProject | null = null;
+      const s = spinner(`Cloning ${gh.repo}`);
+      try {
+        cloned = await cloneAndInstall(gh.url, (msg) => {
+          s.stop();
+          console.log(`  ${D}${msg}...${R}`);
+        });
+        s.stop(`  ${G}✓${R} Cloned ${gh.repo}`);
+
+        const project = await detectProject(cloned.root);
+        if (project) {
+          const s2 = spinner(`Starting ${project.framework} dev server`);
+          const { process: child, url } = await startDevServer(project);
+          s2.stop(`  ${G}✓${R} ${project.framework} server running at ${D}${url}${R}`);
+          targets.push({ url, projectRoot: project.root, isUrl: true, serverProcess: child, clonedProject: cloned });
+        } else {
+          console.log(`  ${Y}No framework detected in ${gh.repo}${R}`);
+          await cloned.cleanup();
+        }
+      } catch (err) {
+        s.stop(`  ${Y}Failed: ${err instanceof Error ? err.message : err}${R}`);
+        if (cloned) await cloned.cleanup().catch(() => {});
+      }
+      continue;
+    }
+
+    // Regular URL (live site audit)
     if (t.startsWith("http")) {
       targets.push({ url: t, projectRoot: configRoot ?? process.cwd(), isUrl: true });
       continue;
@@ -46,7 +76,7 @@ async function resolveTargets(rawTargets: string[], configRoot?: string): Promis
 
     const absPath = resolve(t);
 
-    // Check if it's a project directory (has package.json)
+    // Project directory (has package.json)
     const project = await detectProject(absPath);
     if (project) {
       const s = spinner(`Starting ${project.framework} dev server`);
@@ -70,7 +100,6 @@ async function resolveTargets(rawTargets: string[], configRoot?: string): Promis
         }
       }
     } catch {
-      // Single file
       targets.push({ url: `file://${absPath}`, projectRoot: configRoot ?? process.cwd(), isUrl: false });
     }
   }
@@ -146,8 +175,18 @@ export async function run(config: RecastConfig): Promise<void> {
   const renderer = new Renderer({ concurrency: config.concurrency, timeout: config.timeout });
   const allPatches: Patch[] = [];
   let reportServer: { url: string; close: () => void } | null = null;
+  const scannedUrls = new Set<string>();
 
-  for (const target of targets) {
+  // Build a mutable queue — crawled pages get added during the loop
+  const queue: ScanTarget[] = [...targets];
+
+  while (queue.length > 0) {
+    const target = queue.shift()!;
+
+    // Skip duplicate URLs (from crawling)
+    const normalizedUrl = target.url.replace(/\/$/, "");
+    if (scannedUrls.has(normalizedUrl)) continue;
+    scannedUrls.add(normalizedUrl);
     let page: Page | null = null;
 
     try {
@@ -162,6 +201,20 @@ export async function run(config: RecastConfig): Promise<void> {
       page = rendered.page;
       const p = page;
       s1.stop();
+
+      // Discover internal links for multi-page crawling
+      if (target.isUrl && scannedUrls.size <= 20) {
+        try {
+          const links = await discoverLinks(p, target.url);
+          const newLinks = links.filter((l) => !scannedUrls.has(l.replace(/\/$/, "")));
+          if (newLinks.length > 0) {
+            console.log(`  ${D}Found ${newLinks.length} more pages to scan${R}`);
+            for (const link of newLinks.slice(0, 20 - scannedUrls.size)) {
+              queue.push({ url: link, projectRoot: target.projectRoot, isUrl: true, serverProcess: undefined });
+            }
+          }
+        } catch {}
+      }
 
       const s2 = spinner("Running accessibility checks");
       const { violations: rawViolations } = await detect(p, rendered.result.url);
@@ -284,9 +337,23 @@ export async function run(config: RecastConfig): Promise<void> {
       console.log(
         `\n  ${B}${violations.length}${R} violations` +
         `  ${G}${fixableCount} fixable${R}` +
-        (llmFlagged > 0 ? `  ${Y}${llmFlagged} flagged for review${R}` : "") +
-        `  ${D}${classification.skipped.length} skipped${R}`,
+        (llmFlagged > 0 ? `  ${Y}${llmFlagged} flagged${R}` : "") +
+        `  ${D}${classification.skipped.length} skipped (CSS/manual)${R}`,
       );
+
+      // Explain flagged violations so the user knows what to do
+      if (llmFlagged > 0) {
+        const flaggedItems = classification.low.filter((cv) => cv.fix.confidence < config.autoFixAbove);
+        console.log(`\n  ${Y}Flagged for review${R} ${D}(LLM suggested a fix but confidence < ${config.autoFixAbove} — needs human judgment):${R}`);
+        for (const cv of flaggedItems) {
+          const conf = cv.fix.confidence > 0 ? ` [${cv.fix.confidence.toFixed(2)}]` : "";
+          console.log(`    ${Y}${cv.violation.ruleId}${R}${D}${conf}${R} ${cv.violation.target}`);
+          if (cv.fix.reasoning && cv.fix.reasoning !== "Requires LLM analysis for correct fix") {
+            console.log(`      ${D}Suggestion: ${cv.fix.reasoning}${R}`);
+          }
+        }
+        console.log();
+      }
 
       // ── 5. Open browser report ──
       const reportData = buildReportData(target.url, classification.high, classification.low, classification.skipped, allPatchData);
@@ -362,11 +429,12 @@ export async function run(config: RecastConfig): Promise<void> {
   // Cleanup
   if (reportServer) reportServer.close();
   for (const t of targets) {
-    if (t.serverProcess) {
-      stopDevServer(t.serverProcess);
-    }
+    if (t.serverProcess) stopDevServer(t.serverProcess);
+    if (t.clonedProject) await t.clonedProject.cleanup();
   }
-  if (llmClient) printCostSummary(llmClient.getCostSummary());
+  if (llmClient && llmClient.getCostSummary().totalCalls > 0) {
+    printCostSummary(llmClient.getCostSummary());
+  }
 
   if (allPatches.length > 0) {
     const fileCount = new Set(allPatches.map((p) => p.sourceRef.file)).size;

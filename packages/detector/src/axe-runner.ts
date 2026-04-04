@@ -7,7 +7,6 @@ const require = createRequire(import.meta.url);
 
 let axeSource: string | null = null;
 
-/** Load axe-core source once and cache it */
 async function getAxeSource(): Promise<string> {
   if (axeSource) return axeSource;
   const axePath = require.resolve("axe-core/axe.min.js");
@@ -15,9 +14,25 @@ async function getAxeSource(): Promise<string> {
   return axeSource;
 }
 
+interface AxeCheckResult {
+  id: string;
+  data?: {
+    fgColor?: string;
+    bgColor?: string;
+    contrastRatio?: number;
+    expectedContrastRatio?: string;
+    fontSize?: string;
+    fontWeight?: string;
+  };
+  message?: string;
+}
+
 interface AxeNode {
   html: string;
   target: string[];
+  any?: AxeCheckResult[];
+  all?: AxeCheckResult[];
+  none?: AxeCheckResult[];
 }
 
 interface AxeViolation {
@@ -34,24 +49,31 @@ interface AxeResults {
   violations: AxeViolation[];
 }
 
-/** Map axe-core tags to WCAG criterion strings */
 function extractWcag(tags: string[]): string {
   for (const tag of tags) {
-    // Tags like "wcag2a", "wcag2aa", "wcag412" etc.
     const match = tag.match(/^wcag(\d)(\d)(\d)$/);
-    if (match) {
-      return `${match[1]}.${match[2]}.${match[3]}`;
-    }
+    if (match) return `${match[1]}.${match[2]}.${match[3]}`;
   }
-  // Fallback: return best-effort from tags
   const wcagTag = tags.find((t) => t.startsWith("wcag"));
   return wcagTag ?? "unknown";
 }
 
-/**
- * Run axe-core inside a Playwright page and return normalized violations.
- * Injects axe source directly — no network dependency.
- */
+/** Extract color contrast details from axe check results */
+function extractContrastInfo(node: AxeNode): string | null {
+  const checks = [...(node.any ?? []), ...(node.all ?? []), ...(node.none ?? [])];
+  for (const check of checks) {
+    if (check.data?.fgColor && check.data?.bgColor) {
+      const { fgColor, bgColor, contrastRatio, expectedContrastRatio, fontSize, fontWeight } = check.data;
+      const ratio = contrastRatio ? contrastRatio.toFixed(2) : "?";
+      const expected = expectedContrastRatio ?? "4.5:1";
+      let info = `Contrast ${ratio}:1 (needs ${expected}). Foreground: ${fgColor}, Background: ${bgColor}`;
+      if (fontSize) info += `. Font: ${fontSize}${fontWeight ? ` ${fontWeight}` : ""}`;
+      return info;
+    }
+  }
+  return null;
+}
+
 export async function runAxe(
   page: Page,
   pageUrl: string,
@@ -73,9 +95,17 @@ export async function runAxe(
 
   for (const v of results.violations) {
     for (const node of v.nodes) {
+      let description = v.help;
+
+      // Enrich color-contrast violations with actual color data
+      if (v.id === "color-contrast") {
+        const contrastInfo = extractContrastInfo(node);
+        if (contrastInfo) description = contrastInfo;
+      }
+
       violations.push({
         ruleId: v.id,
-        description: v.help,
+        description,
         wcag: extractWcag(v.tags),
         impact: (v.impact as Impact) ?? "moderate",
         html: node.html,

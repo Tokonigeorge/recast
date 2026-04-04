@@ -217,17 +217,11 @@ function render(filter) {
     tr.dataset.index = v.index;
     tr.className = isSkip ? "row-skip" : "selected";
 
-    // Build reasoning + optional color contrast hint
-    let extra = "";
-    if (v.ruleId === "color-contrast") {
-      extra = '<div class="color-hint">CSS fix needed — adjust foreground/background colors to meet WCAG AA ratio (4.5:1)</div>';
-    }
-
     tr.innerHTML =
       '<td><input type="checkbox" class="check row-check" data-index="' + v.index + '"' +
         (isSkip ? ' disabled' : ' checked') + '></td>' +
       '<td style="color:#8b949e">' + (v.index + 1) + '</td>' +
-      '<td><strong>' + esc(v.ruleId) + '</strong><div class="reasoning">' + esc(v.reasoning) + '</div>' + extra + '</td>' +
+      '<td><strong>' + esc(v.ruleId) + '</strong><div class="reasoning">' + esc(v.description || v.reasoning) + '</div></td>' +
       '<td><span class="impact impact-' + v.impact + '">' + v.impact + '</span></td>' +
       '<td><span class="fix-badge fix-' + v.level + '">' + (v.level === "high" ? "auto" : v.level === "low" ? "LLM" : "skip") + '</span></td>' +
       '<td style="font-family:monospace;font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:' +

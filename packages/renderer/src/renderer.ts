@@ -35,12 +35,29 @@ export class Renderer {
         waitUntil: "domcontentloaded",
         timeout: this.timeout,
       });
+      // Wait a bit for JS-heavy sites to settle
+      await page.waitForTimeout(1000);
       const html = await page.content();
       const siteType = detectSiteType(html);
       return { result: { html, siteType, url }, page };
     } catch (err) {
-      this.pool.releasePage(page);
-      throw err;
+      // Retry once with networkidle for stubborn sites
+      try {
+        await page.goto(url, {
+          waitUntil: "networkidle",
+          timeout: this.timeout,
+        });
+        const html = await page.content();
+        const siteType = detectSiteType(html);
+        return { result: { html, siteType, url }, page };
+      } catch {
+        this.pool.releasePage(page);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("ERR_HTTP2") || msg.includes("ERR_CONNECTION") || msg.includes("ERR_NAME")) {
+          throw new Error(`Could not load ${url} — the site may be blocking automated browsers or is unreachable.`);
+        }
+        throw err;
+      }
     }
   }
 

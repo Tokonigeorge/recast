@@ -18,14 +18,22 @@ git clone https://github.com/your-org/recast.git
 cd recast
 pnpm install
 
-# Scan a project (auto-starts dev server)
-pnpm recast ./path/to/project
+# From inside your project: auto-detects framework, starts dev server
+cd ~/my-react-app
+recast .
 
-# Scan a running dev server
-pnpm recast http://localhost:3000
+# From anywhere: point at a project directory
+recast ./path/to/project
+
+# Scan any GitHub repo directly (clones, installs, scans, cleans up)
+recast github:vuejs/docs
+recast https://github.com/shadcn-ui/ui
+
+# Audit a live website (read-only, no patching)
+recast https://www.example.com
 
 # Scan a static HTML file
-pnpm recast index.html
+recast index.html
 ```
 
 ### LLM Setup
