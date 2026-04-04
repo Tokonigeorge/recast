@@ -29,6 +29,13 @@ export function spinner(message: string): { stop: (final?: string) => void } {
   };
 }
 
+export async function waitForEnter(message = "Press Enter to continue"): Promise<void> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(`${D}${message}${R} `, () => { rl.close(); resolve(); });
+  });
+}
+
 export async function confirm(message: string, defaultYes = true): Promise<boolean> {
   const hint = defaultYes ? "[Y/n]" : "[y/N]";
   const rl = createInterface({ input: process.stdin, output: process.stdout });

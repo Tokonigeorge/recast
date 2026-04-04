@@ -1,6 +1,7 @@
 import { readFile, readdir, access } from "node:fs/promises";
 import { join, extname, resolve } from "node:path";
 import { execSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import type { Page } from "playwright";
 import { Renderer } from "@recast-a11y/renderer";
 import { detect, enrichViolation } from "@recast-a11y/detector";
@@ -11,8 +12,9 @@ import { traceToSource, traceInStaticHtml, resolveSourcePath } from "@recast-a11
 import { patchHtml, patchJsx, writePatch } from "@recast-a11y/patcher";
 import { printCostSummary, buildReportData, generateHtmlReport, serveReport } from "@recast-a11y/reporter";
 import type { RecastConfig } from "../config.js";
+import { detectProject, startDevServer, stopDevServer } from "../project.js";
 import {
-  spinner, confirm, choose,
+  spinner, confirm, waitForEnter,
   printDiffBlock, printHeader, printViolationTable,
   type ViolationRow,
 } from "../ui.js";
@@ -25,20 +27,55 @@ const D = "\x1b[2m";
 
 const HTML_EXTENSIONS = new Set([".html", ".htm"]);
 
-async function resolveTargets(targets: string[]): Promise<string[]> {
-  const files: string[] = [];
-  for (const t of targets) {
-    if (t.startsWith("http")) { files.push(t); continue; }
+interface ScanTarget {
+  url: string;
+  projectRoot: string;
+  isUrl: boolean;
+  serverProcess?: ChildProcess;
+}
+
+async function resolveTargets(rawTargets: string[], configRoot?: string): Promise<ScanTarget[]> {
+  const targets: ScanTarget[] = [];
+
+  for (const t of rawTargets) {
+    // Already a URL
+    if (t.startsWith("http")) {
+      targets.push({ url: t, projectRoot: configRoot ?? process.cwd(), isUrl: true });
+      continue;
+    }
+
+    const absPath = resolve(t);
+
+    // Check if it's a project directory (has package.json)
+    const project = await detectProject(absPath);
+    if (project) {
+      const s = spinner(`Starting ${project.framework} dev server`);
+      try {
+        const { process: child, url } = await startDevServer(project);
+        s.stop(`  ${G}✓${R} ${project.framework} server running at ${D}${url}${R}`);
+        targets.push({ url, projectRoot: project.root, isUrl: true, serverProcess: child });
+      } catch (err) {
+        s.stop(`  ${Y}Could not start dev server: ${err instanceof Error ? err.message : err}${R}`);
+      }
+      continue;
+    }
+
+    // Plain directory — find HTML files
     try {
-      const entries = await readdir(t, { withFileTypes: true });
+      const entries = await readdir(absPath, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isFile() && HTML_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-          files.push(join(t, entry.name));
+          const filePath = join(absPath, entry.name);
+          targets.push({ url: `file://${filePath}`, projectRoot: absPath, isUrl: false });
         }
       }
-    } catch { files.push(t); }
+    } catch {
+      // Single file
+      targets.push({ url: `file://${absPath}`, projectRoot: configRoot ?? process.cwd(), isUrl: false });
+    }
   }
-  return files;
+
+  return targets;
 }
 
 function isGitRepo(): boolean {
@@ -82,28 +119,28 @@ function conciseDiff(
 }
 
 export async function run(config: RecastConfig): Promise<void> {
-  const targets = await resolveTargets(config.targets);
-  if (targets.length === 0) {
-    console.error("No HTML files found in the given targets.");
+  if (config.targets.length === 0) {
+    console.error("No targets specified. Use --help for usage.");
     process.exit(1);
   }
 
   printHeader();
 
-  // ── Detect LLM provider ──
   const resolved = detectProvider({ provider: config.provider, apiKey: config.apiKey });
   let llmClient: LlmClient | null = null;
 
   if (resolved) {
-    llmClient = new LlmClient({
-      provider: resolved.provider,
-      apiKey: resolved.apiKey,
-      model: config.model,
-    });
+    llmClient = new LlmClient({ provider: resolved.provider, apiKey: resolved.apiKey, model: config.model });
     console.log(`  ${D}LLM: ${resolved.provider} (${llmClient.modelName})${R}\n`);
   } else {
     console.log(`  ${D}No API key found. Set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY for LLM fixes.${R}`);
     console.log(`  ${D}Proceeding with rule-based auto-fixes only.${R}\n`);
+  }
+
+  const targets = await resolveTargets(config.targets, config.projectRoot);
+  if (targets.length === 0) {
+    console.error("No scannable targets found.");
+    process.exit(1);
   }
 
   const renderer = new Renderer({ concurrency: config.concurrency, timeout: config.timeout });
@@ -115,28 +152,36 @@ export async function run(config: RecastConfig): Promise<void> {
 
     try {
       // ── 1. Scan ──
-      const s1 = spinner(`Scanning ${target}`);
-      const isUrl = target.startsWith("http");
-      const rendered = isUrl
-        ? await renderer.renderUrl(target)
-        : await renderer.renderHtml(await readFile(target, "utf-8"), `file://${target}`);
+      const s1 = spinner(`Scanning ${target.url}`);
+      const rendered = target.isUrl
+        ? await renderer.renderUrl(target.url)
+        : await renderer.renderHtml(
+            await readFile(target.url.replace("file://", ""), "utf-8"),
+            target.url,
+          );
       page = rendered.page;
       const p = page;
       s1.stop();
 
       const s2 = spinner("Running accessibility checks");
-      const { violations } = await detect(p, rendered.result.url);
+      const { violations: rawViolations } = await detect(p, rendered.result.url);
       s2.stop();
 
+      // Filter out dev tooling (Vite error overlay, HMR elements, etc.)
+      const DEV_TOOL_PATTERNS = ["vite-error-overlay", "__vite", "__next", "__nuxt", "webpack-dev-server"];
+      const violations = rawViolations.filter((v) =>
+        !DEV_TOOL_PATTERNS.some((p) => v.target.includes(p) || v.html.includes(p)),
+      );
+
       if (violations.length === 0) {
-        console.log(`  ${G}✓${R} ${target} — no violations\n`);
+        console.log(`  ${G}✓${R} ${target.url} — no violations\n`);
         continue;
       }
 
       const classification = classify(violations, config.autoFixAbove);
-      const html = isUrl ? rendered.result.html : await readFile(target, "utf-8");
+      const html = rendered.result.html;
 
-      // ── 2. Run LLM for low-confidence violations (before showing anything) ──
+      // ── 2. Run LLM for low-confidence violations ──
       const allFixable: ClassifiedViolation[] = [...classification.high];
 
       if (llmClient && classification.low.length > 0) {
@@ -152,51 +197,55 @@ export async function run(config: RecastConfig): Promise<void> {
           const updated = { ...classification.low[i], fix };
           if (fix.confidence >= config.autoFixAbove) {
             allFixable.push(updated);
-            classification.low[i] = updated; // update for display
+            classification.low[i] = updated;
           }
         }
       }
 
-      // ── 3. Build all patches ──
-      const projectRoot = config.projectRoot
-        ? resolve(config.projectRoot)
-        : process.cwd();
+      // ── 3. Build patches (trace to source for URL scans) ──
+      const projectRoot = target.projectRoot;
       const allPatchData: Array<{ cv: ClassifiedViolation; patch: Patch }> = [];
 
       for (const cv of allFixable) {
         let sourceRef;
 
-        if (isUrl) {
-          // Trace from rendered DOM to source file via React fiber / Domscribe
-          const traced = await traceToSource(p, cv.violation.target);
-          if (traced) {
-            const resolvedFile = resolveSourcePath(traced.file, projectRoot);
+        if (target.isUrl) {
+          // Root HTML violations (html-has-lang, document-title) target <html>
+          // which has no React fiber — fall back to the project's index.html
+          if (cv.violation.target === "html" || cv.violation.html.startsWith("<html")) {
+            const indexPath = join(projectRoot, "index.html");
             try {
-              // Fiber gives us the file but line may point to the component, not the element.
-              // Re-trace within the source file using pattern matching for the exact line.
-              const sourceContents = await readFile(resolvedFile, "utf-8");
-              const elementRef = traceInStaticHtml(sourceContents, resolvedFile, cv.violation.html);
-              // Also try JSX equivalents: class→className, for→htmlFor
-              const jsxHtml = cv.violation.html
-                .replace(/\bclass="/g, 'className="')
-                .replace(/\bfor="/g, 'htmlFor="');
-              const jsxRef = elementRef ?? traceInStaticHtml(sourceContents, resolvedFile, jsxHtml);
-              sourceRef = jsxRef ?? { file: resolvedFile, line: traced.line };
-            } catch {
-              sourceRef = { file: resolvedFile, line: traced.line };
+              const indexContents = await readFile(indexPath, "utf-8");
+              sourceRef = traceInStaticHtml(indexContents, indexPath, cv.violation.html);
+            } catch {}
+          }
+
+          if (!sourceRef) {
+            const traced = await traceToSource(p, cv.violation.target);
+            if (traced) {
+              const resolvedFile = resolveSourcePath(traced.file, projectRoot);
+              try {
+                const sourceContents = await readFile(resolvedFile, "utf-8");
+                const jsxHtml = cv.violation.html.replace(/\bclass="/g, 'className="').replace(/\bfor="/g, 'htmlFor="');
+                sourceRef = traceInStaticHtml(sourceContents, resolvedFile, cv.violation.html)
+                  ?? traceInStaticHtml(sourceContents, resolvedFile, jsxHtml)
+                  ?? { file: resolvedFile, line: traced.line };
+              } catch {
+                sourceRef = { file: resolvedFile, line: traced.line };
+              }
             }
           }
         } else {
-          sourceRef = traceInStaticHtml(html, target, cv.violation.html);
+          const localFile = target.url.replace("file://", "");
+          sourceRef = traceInStaticHtml(html, localFile, cv.violation.html);
         }
 
         if (!sourceRef) continue;
 
-        // For JSX source files, read the actual file and patch it
         let original: string;
         let fixed: string;
 
-        if (isUrl && sourceRef.file !== target) {
+        if (target.isUrl && sourceRef.file !== target.url) {
           try {
             const sourceContents = await readFile(sourceRef.file, "utf-8");
             const ext = sourceRef.file.match(/\.(jsx|tsx|js|ts)$/i);
@@ -206,9 +255,7 @@ export async function run(config: RecastConfig): Promise<void> {
             if (!patched || patched === sourceContents) continue;
             original = sourceContents.split("\n")[sourceRef.line - 1]?.trim() ?? "";
             fixed = patched.split("\n")[sourceRef.line - 1]?.trim() ?? "";
-          } catch {
-            continue; // file not found — skip this patch
-          }
+          } catch { continue; }
         } else {
           const patched = patchHtml(html, sourceRef, cv.violation.html, cv.fix);
           if (!patched || patched === html) continue;
@@ -229,7 +276,7 @@ export async function run(config: RecastConfig): Promise<void> {
         ...classification.low.map((cv) => row(cv, "low")),
         ...classification.skipped.map((cv) => row(cv, "skip")),
       ];
-      printViolationTable(rows, target);
+      printViolationTable(rows, target.url);
 
       const fixableCount = allPatchData.length;
       const llmFlagged = classification.low.filter((cv) => cv.fix.confidence < config.autoFixAbove).length;
@@ -241,8 +288,8 @@ export async function run(config: RecastConfig): Promise<void> {
         `  ${D}${classification.skipped.length} skipped${R}`,
       );
 
-      // ── 5. Open browser report (with all diffs ready) ──
-      const reportData = buildReportData(target, classification.high, classification.low, classification.skipped, allPatchData);
+      // ── 5. Open browser report ──
+      const reportData = buildReportData(target.url, classification.high, classification.low, classification.skipped, allPatchData);
       const reportHtml = generateHtmlReport(reportData);
       reportServer = await serveReport({
         html: reportHtml,
@@ -263,24 +310,22 @@ export async function run(config: RecastConfig): Promise<void> {
       console.log(`  ${D}Report: ${reportServer.url}${R}\n`);
 
       if (fixableCount === 0) {
-        console.log(`  ${D}No fixes above confidence threshold.${R}\n`);
+        console.log(`  ${D}No fixes above confidence threshold.${R}`);
+        if (violations.length > 0) {
+          console.log(`  ${D}Review the ${violations.length} violations in the browser report above.${R}`);
+          await waitForEnter();
+        }
         continue;
       }
 
       // ── 6. Show diffs ──
-      console.log(`  ${B}${fixableCount} fixes ready:${R}\n`);
+      console.log(`  ${B}${fixableCount} fixes:${R}\n`);
       for (const { cv, patch } of allPatchData) {
         console.log(`  ${D}[${cv.fix.confidence.toFixed(2)}]${R} ${B}${cv.violation.ruleId}${R} — ${cv.fix.reasoning}`);
         printDiffBlock(patch.originalCode, patch.fixedCode, patch.sourceRef.file, patch.sourceRef.line);
       }
 
       // ── 7. Apply ──
-      if (isUrl && allPatchData.length === 0) {
-        console.log(`  ${D}Could not trace URL violations to local source files.${R}`);
-        console.log(`  ${D}Use --project-root to specify the project directory.${R}\n`);
-        continue;
-      }
-
       if (isGitRepo() && !isGitClean()) {
         console.log(`  ${Y}You have uncommitted changes.${R} Fixes will be mixed with your working tree.`);
         console.log(`  ${D}Tip: git stash, run recast, then git stash pop${R}\n`);
@@ -297,17 +342,14 @@ export async function run(config: RecastConfig): Promise<void> {
         const applied = await writePatch(cv.violation, cv.fix, patch.sourceRef);
         if (applied) allPatches.push(applied);
       }
-      console.log(`  ${G}✓ Applied ${fixableCount} fixes${R}`);
 
+      const modifiedFiles = [...new Set(allPatchData.map((tp) => tp.patch.sourceRef.file))];
+      console.log(`  ${G}✓ Applied ${fixableCount} fixes to ${modifiedFiles.length} file${modifiedFiles.length > 1 ? "s" : ""}:${R}`);
+      for (const f of modifiedFiles) {
+        console.log(`    ${D}${f}${R}`);
+      }
       if (isGitRepo()) {
-        const files = [...new Set(allPatchData.map((tp) => tp.patch.sourceRef.file))];
-        try {
-          execSync(`git add ${files.map((f) => `"${f}"`).join(" ")}`, { stdio: "pipe" });
-          execSync(`git commit -m "recast: fix ${fixableCount} a11y violations"`, { stdio: "pipe" });
-          console.log(`  ${D}Committed. Review: git diff HEAD~1 | Revert: git reset HEAD~1${R}\n`);
-        } catch {
-          console.log(`  ${D}Git commit failed — changes are unstaged.${R}\n`);
-        }
+        console.log(`  ${D}Review: git diff | Revert: git checkout -- <file>${R}\n`);
       }
 
     } catch (error) {
@@ -317,7 +359,13 @@ export async function run(config: RecastConfig): Promise<void> {
     }
   }
 
+  // Cleanup
   if (reportServer) reportServer.close();
+  for (const t of targets) {
+    if (t.serverProcess) {
+      stopDevServer(t.serverProcess);
+    }
+  }
   if (llmClient) printCostSummary(llmClient.getCostSummary());
 
   if (allPatches.length > 0) {
@@ -326,6 +374,7 @@ export async function run(config: RecastConfig): Promise<void> {
   }
 
   await renderer.close();
+  process.exit(0);
 }
 
 function row(cv: ClassifiedViolation, confidence: "high" | "low" | "skip"): ViolationRow {

@@ -94,7 +94,7 @@ export const HIGH_CONFIDENCE_RULES: HighConfidenceRule[] = [
   },
   { ruleId: "link-name", match() { return null; } },
   { ruleId: "label", match() { return null; } },
-  { ruleId: "document-title", match() { return null; } },
+  // document-title is in SKIP_RULES — page titles are product decisions
   { ruleId: "heading-order", match() { return null; } },
   { ruleId: "color-contrast", match() { return null; } },
   {
@@ -131,6 +131,7 @@ export const SKIP_RULES = new Set([
   "audio-caption", "video-caption", "video-description",
   "no-autoplay-audio", "css-orientation-lock",
   "nested-interactive",
+  "document-title",
 ]);
 
 const rulesByRuleId = new Map<string, HighConfidenceRule[]>();

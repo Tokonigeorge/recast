@@ -1,32 +1,125 @@
-# Recast — Handoff Documentation
+# Recast
 
-**Automated Accessibility Rewriter**
+**Automated accessibility rewriter for web projects.**
 
-Recast crawls a web project, detects accessibility violations, and rewrites source code to fix them. It outputs a git diff. Developers review and merge. High-confidence fixes are applied automatically. Judgment-call fixes are flagged for human review with a suggested fix attached.
+Point Recast at a React, Next.js, Vue, or static HTML project. It detects WCAG violations, generates fixes, and rewrites your source code. High-confidence fixes are applied automatically. Judgment calls are flagged for review with a suggested fix attached.
 
----
+```bash
+recast ./my-react-app
+```
 
-## Document Index
+Recast starts your dev server, scans the rendered page with Playwright + axe-core, traces violations back to JSX/HTML source files via React fiber stack traces, and patches the code.
 
-| File | Contents |
-|---|---|
-| [`01-what-and-why.md`](./01-what-and-why.md) | Problem, gap in the market, why now, legal framing |
-| [`02-research.md`](./02-research.md) | All key research findings — Playwright, LLM formats, rendering, source tracing |
-| [`03-cost-model.md`](./03-cost-model.md) | Pricing comparison, real cost per page, business model options |
-| [`04-architecture.md`](./04-architecture.md) | Full system design, all 8 stages, diagrams |
-| [`05-prompt-design.md`](./05-prompt-design.md) | LLM prompt templates, high-confidence rules, two-step pattern |
-| [`06-build-plan.md`](./06-build-plan.md) | Phased build plan, repo structure, tech stack, where to start |
-| [`07-constraints.md`](./07-constraints.md) | Known edge cases, what Recast cannot fix, fallback strategies |
+## Quick Start
 
----
+```bash
+# Clone and install
+git clone https://github.com/your-org/recast.git
+cd recast
+pnpm install
 
-## The One-Line Summary
+# Scan a project (auto-starts dev server)
+pnpm recast ./path/to/project
 
-> Subfont subsets fonts to only what a page actually uses and rewrites your HTML.
-> Recast does the same for accessibility — detects what's actually broken, fixes what it can with certainty, flags the rest, and rewrites your source.
+# Scan a running dev server
+pnpm recast http://localhost:3000
 
----
+# Scan a static HTML file
+pnpm recast index.html
+```
 
-## Status
+### LLM Setup
 
-Ready to build. Architecture is finalised. Start with [`06-build-plan.md`](./06-build-plan.md).
+Recast uses an LLM for violations that need semantic judgment (alt text, button labels, heading structure). Set one of these environment variables:
+
+```bash
+# Gemini (cheapest, default)
+GEMINI_API_KEY=your-key
+
+# OpenAI
+OPENAI_API_KEY=your-key
+
+# Anthropic
+ANTHROPIC_API_KEY=your-key
+```
+
+Without an API key, Recast still detects all violations and auto-fixes the mechanical ones (missing `lang`, broken ARIA refs, button types).
+
+## How It Works
+
+```
+Your project
+    |
+    v
+1. RENDER     Playwright launches Chromium, loads the page
+2. DETECT     axe-core + custom checks find WCAG violations
+3. SNAPSHOT   ariaSnapshot() captures what screen readers see
+4. CLASSIFY   Rule engine splits: auto-fixable / needs LLM / skip (CSS-only)
+5. FIX        Rule-based patcher or LLM generates the fix
+6. TRACE      React fiber stack traces map violations to source files
+7. PATCH      Rewrites JSX/TSX/HTML at the correct line
+8. REVIEW     Shows diffs, you confirm, files are updated
+```
+
+## What It Fixes
+
+**Auto-fixed (no LLM):**
+- Missing `lang` attribute on `<html>`
+- Broken `aria-labelledby` references
+- Buttons in forms without `type` attribute
+- `aria-hidden` on focusable elements
+- Decorative images missing `alt=""`
+
+**LLM-assisted (Gemini/OpenAI/Anthropic):**
+- Alt text for meaningful images (from surrounding context)
+- Accessible names for icon-only buttons
+- Link labels for icon-only links
+- Heading hierarchy corrections
+
+**Skipped (reported, not patched):**
+- Color contrast (CSS fix)
+- Touch target size (CSS fix)
+- Video captions (needs human)
+- Page title (product decision)
+
+## Supported Frameworks
+
+| Framework | Auto-detected | Source tracing |
+|---|---|---|
+| Vite + React | Yes | React fiber `_debugStack` |
+| Next.js | Yes | React fiber `_debugStack` |
+| Nuxt / Vue | Yes | `__vue__` internals |
+| SvelteKit | Yes | Planned |
+| Astro | Yes | Planned |
+| Create React App | Yes | React fiber |
+| Static HTML | Yes | Pattern matching |
+
+## CLI Options
+
+```
+recast <files, urls, or dirs...>
+
+Options:
+  -p, --provider <name>   Force LLM provider: gemini, openai, anthropic
+  -k, --api-key <key>     API key (or use env vars)
+  -m, --model <model>     Override model name
+  --auto-fix-above <n>    Confidence threshold (default: 0.85)
+  --project-root <path>   Project root for source tracing
+  --concurrency <n>       Max concurrent pages (default: 4)
+  --timeout <ms>          Page load timeout (default: 30000)
+  -h, --help              Show help
+```
+
+## Development
+
+```bash
+pnpm install
+pnpm test              # 40 unit + integration tests
+pnpm run test:real     # Real-world test against public repos
+pnpm recast fixtures/test-page.html   # Test against fixture
+pnpm recast fixtures/react-app        # Test against React app
+```
+
+## License
+
+MIT
