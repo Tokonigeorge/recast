@@ -61,15 +61,31 @@ importers:
 
   packages/detector:
     dependencies:
+      '@babel/parser':
+        specifier: ^7.25.0
+        version: 7.29.2
+      '@babel/traverse':
+        specifier: ^7.25.0
+        version: 7.29.0
+      '@babel/types':
+        specifier: ^7.25.0
+        version: 7.29.0
       '@recast-a11y/classifier':
         specifier: workspace:*
         version: link:../classifier
       axe-core:
         specifier: ^4.11.0
         version: 4.11.1
+      node-html-parser:
+        specifier: ^7.0.0
+        version: 7.1.0
       playwright:
         specifier: ^1.50.0
         version: 1.58.2
+    devDependencies:
+      '@types/babel__traverse':
+        specifier: ^7.20.0
+        version: 7.28.0
 
   packages/llm:
     dependencies:
@@ -622,6 +638,9 @@ packages:
     resolution: {integrity: sha512-lWMnixq/QzxyhTV6NjQJ4SFo1J6PvOX8vUx5Wb4bBPsEb+8xZ89Bz6kOXpfXj9ak9AHTQVQzlgzBEc1SyM27xQ==}
     cpu: [x64]
     os: [win32]
+
+  '@types/babel__traverse@7.28.0':
+    resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1619,6 +1638,10 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
+
+  '@types/babel__traverse@7.28.0':
+    dependencies:
+      '@babel/types': 7.29.0
 
   '@types/chai@5.2.3':
     dependencies:
