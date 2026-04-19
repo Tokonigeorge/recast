@@ -102,17 +102,17 @@ function isBrokenValue(v: string): boolean {
 function isUselessLabel(v: string): boolean {
   const lower = v.toLowerCase().trim();
 
-  // Just the component name — "Input", "Select", "Textarea", "Button", etc.
-  if (/^(input|select|textarea|button|checkbox|radio|field|form|element)$/i.test(lower)) return true;
+  // Just the element/component type — "Input", "Textarea", "Text area", "Textbox", etc.
+  if (/^(input|select|textarea|text ?area|text ?box|text ?field|button|checkbox|radio|field|form|element|dropdown|combobox)$/i.test(lower)) return true;
 
   // LLM regurgitated the instruction as the label
   if (/please provide|provide a (descriptive|meaningful|accessible) (label|name)/i.test(lower)) return true;
   if (/based on (context|surrounding|the element)/i.test(lower)) return true;
   if (/^(descriptive|meaningful|accessible) (label|name)/i.test(lower)) return true;
-  if (/^(todo|tbd|fixme|xxx|placeholder)/i.test(lower)) return true;
+  if (/^(todo|tbd|fixme|xxx|placeholder|unknown|unnamed)/i.test(lower)) return true;
 
   // Too generic to be useful
-  if (/^(text|input field|form field|click here|button|link)$/i.test(lower)) return true;
+  if (/^(text|input field|form field|click here|button|link|value|name|label)$/i.test(lower)) return true;
 
   return false;
 }

@@ -32,17 +32,19 @@ function htmlAttrToJsx(attr: string): string {
   return HTML_TO_JSX_ATTRS[attr] ?? attr;
 }
 
-/** Find the line that closes the opening tag starting at lineIdx (handles multi-line). */
+/**
+ * Find the line that closes the opening JSX tag starting at lineIdx.
+ * Refuses to match closing tags (</foo>) — those are not opening tags.
+ */
 function findTagCloseInfo(lines: string[], lineIdx: number): { closeLine: number; closeCol: number } | null {
   let inString: string | null = null;
   let braceDepth = 0;
-  let foundTag = false;
+  let foundOpenTag = false;
 
   for (let ln = lineIdx; ln < Math.min(lineIdx + 20, lines.length); ln++) {
     const line = lines[ln];
-    const startCol = ln === lineIdx ? 0 : 0;
 
-    for (let i = startCol; i < line.length; i++) {
+    for (let i = 0; i < line.length; i++) {
       const ch = line[i];
 
       if (inString) {
@@ -54,9 +56,19 @@ function findTagCloseInfo(lines: string[], lineIdx: number): { closeLine: number
       if (ch === "{") { braceDepth++; continue; }
       if (ch === "}") { braceDepth--; continue; }
 
-      if (ch === "<" && !foundTag) { foundTag = true; continue; }
+      // Detect `<Identifier` (opening tag) — reject `</` (closing) and `<>` (fragment)
+      if (ch === "<" && !foundOpenTag) {
+        const next = line[i + 1];
+        if (next === "/") continue; // closing tag — skip
+        if (next === ">" || next === "<") continue; // fragment or invalid
+        if (next && /[a-zA-Z]/.test(next)) {
+          foundOpenTag = true;
+          continue;
+        }
+        continue;
+      }
 
-      if (braceDepth === 0 && foundTag) {
+      if (braceDepth === 0 && foundOpenTag) {
         if (ch === "/" && line[i + 1] === ">") return { closeLine: ln, closeCol: i };
         if (ch === ">" && (i === 0 || line[i - 1] !== "=")) return { closeLine: ln, closeCol: i };
       }
