@@ -54,7 +54,10 @@ export class Renderer {
         this.pool.releasePage(page);
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("ERR_HTTP2") || msg.includes("ERR_CONNECTION") || msg.includes("ERR_NAME")) {
-          throw new Error(`Could not load ${url} — the site may be blocking automated browsers or is unreachable.`);
+          throw new Error("Site may be blocking automated browsers or is unreachable");
+        }
+        if (msg.includes("Timeout")) {
+          throw new Error("Page load timed out");
         }
         throw err;
       }

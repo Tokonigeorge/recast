@@ -1,12 +1,12 @@
-import { readFile, readdir, access } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join, extname, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import type { Page } from "playwright";
 import { Renderer, discoverLinks } from "@recast-a11y/renderer";
-import { detect, enrichViolation } from "@recast-a11y/detector";
+import { detect, enrichViolation, staticAnalyze } from "@recast-a11y/detector";
 import { classify } from "@recast-a11y/classifier";
-import type { ClassifiedViolation, Patch } from "@recast-a11y/classifier";
+import type { Violation, ClassifiedViolation, Patch } from "@recast-a11y/classifier";
 import { LlmClient, detectProvider } from "@recast-a11y/llm";
 import { traceToSource, traceInStaticHtml, resolveSourcePath } from "@recast-a11y/tracer";
 import { patchHtml, patchJsx, writePatch } from "@recast-a11y/patcher";
@@ -167,18 +167,184 @@ export async function run(config: RecastConfig): Promise<void> {
   }
 
   const targets = await resolveTargets(config.targets, config.projectRoot);
-  if (targets.length === 0) {
+  const allPatches: Patch[] = [];
+
+  // ── Static analysis first (instant, no server needed) ──
+  // Only run on targets that have a real local project (not bare URLs)
+  const projectRoots = new Set<string>();
+  for (const t of targets) {
+    if (t.serverProcess || t.clonedProject) {
+      // Has a dev server we started — it's a real project
+      projectRoots.add(t.projectRoot);
+    }
+  }
+  for (const t of config.targets) {
+    if (t.startsWith("http")) continue;
+    if (parseGitHubTarget(t)) continue;
+    projectRoots.add(resolve(t));
+  }
+
+  let staticViolationCount = 0;
+  const staticResults: Array<{ file: string; violations: Violation[] }> = [];
+
+  for (const root of projectRoots) {
+    const s = spinner(`Scanning source files in ${root.split("/").slice(-2).join("/")}`);
+    try {
+      const results = await staticAnalyze(root);
+      s.stop();
+      for (const r of results) {
+        staticResults.push(r);
+        staticViolationCount += r.violations.length;
+      }
+    } catch {
+      s.stop();
+    }
+  }
+
+  if (staticViolationCount > 0) {
+    console.log(`  ${B}Static analysis:${R} found ${B}${staticViolationCount}${R} violations across ${staticResults.length} files\n`);
+
+    // Classify and build patches from static results
+    const allStaticViolations: Violation[] = [];
+    for (const r of staticResults) {
+      allStaticViolations.push(...r.violations);
+    }
+
+    const classification = classify(allStaticViolations, config.autoFixAbove);
+
+    // Show table
+    const rows: ViolationRow[] = [
+      ...classification.high.map((cv) => row(cv, "high")),
+      ...classification.low.map((cv) => row(cv, "low")),
+      ...classification.skipped.map((cv) => row(cv, "skip")),
+    ];
+    printViolationTable(rows, "Source files");
+
+    const fixable = [...classification.high];
+
+    // Run LLM for low-confidence if available
+    if (llmClient && classification.low.length > 0) {
+      const s3 = spinner(`Generating ${classification.low.length} fixes via ${llmClient.providerName}`);
+      // Static violations don't have ARIA context, so enrich with what we have
+      const enriched = classification.low.map((cv) => ({
+        ...cv.violation,
+        ariaContext: "",
+        section: "unknown",
+        pageTitle: "unknown",
+      }));
+      const fixes = await llmClient.generateFixes(enriched);
+      s3.stop();
+
+      for (let i = 0; i < classification.low.length; i++) {
+        if (fixes[i].confidence >= config.autoFixAbove) {
+          fixable.push({ ...classification.low[i], fix: fixes[i] });
+        }
+      }
+    }
+
+    console.log(
+      `\n  ${B}${allStaticViolations.length}${R} violations` +
+      `  ${G}${fixable.length} fixable${R}` +
+      `  ${D}${classification.skipped.length} skipped (CSS/manual)${R}\n`,
+    );
+
+    // Build patches — use the line number the static analyzer already captured
+    const staticPatches: Array<{ cv: ClassifiedViolation; patch: Patch }> = [];
+    for (const cv of fixable) {
+      // Use the line number captured at analysis time (much more reliable than re-tracing)
+      const sourceRef = cv.violation.line
+        ? { file: cv.violation.pageUrl, line: cv.violation.line }
+        : traceInStaticHtml(
+            await readFile(cv.violation.pageUrl, "utf-8"),
+            cv.violation.pageUrl,
+            cv.violation.html,
+          );
+      if (!sourceRef) continue;
+
+      const sourceContents = await readFile(sourceRef.file, "utf-8");
+      const ext = sourceRef.file.match(/\.(jsx|tsx|js|ts)$/i);
+      const patched = ext
+        ? patchJsx(sourceContents, sourceRef, cv.violation.html, cv.fix)
+        : patchHtml(sourceContents, sourceRef, cv.violation.html, cv.fix);
+      if (!patched || patched === sourceContents) continue;
+
+      const original = sourceContents.split("\n")[sourceRef.line - 1]?.trim() ?? "";
+      const fixed = patched.split("\n")[sourceRef.line - 1]?.trim() ?? "";
+
+      staticPatches.push({
+        cv,
+        patch: { sourceRef, violation: cv.violation, fix: cv.fix, originalCode: original, fixedCode: fixed },
+      });
+    }
+
+    if (staticPatches.length > 0) {
+      console.log(`  ${B}${staticPatches.length} fixes:${R}\n`);
+      for (const { cv, patch } of staticPatches) {
+        console.log(`  ${D}[${cv.fix.confidence.toFixed(2)}]${R} ${B}${cv.violation.ruleId}${R} — ${cv.fix.reasoning}`);
+        printDiffBlock(patch.originalCode, patch.fixedCode, patch.sourceRef.file, patch.sourceRef.line);
+      }
+
+      if (isGitRepo() && !isGitClean()) {
+        console.log(`  ${Y}You have uncommitted changes.${R}`);
+        console.log(`  ${D}Tip: git stash, run recast, then git stash pop${R}\n`);
+      }
+
+      const shouldApply = await confirm(`Apply ${staticPatches.length} fixes?`);
+      if (shouldApply) {
+        for (const { cv, patch } of staticPatches) {
+          const applied = await writePatch(cv.violation, cv.fix, patch.sourceRef);
+          if (applied) allPatches.push(applied);
+        }
+        const modifiedFiles = [...new Set(staticPatches.map((tp) => tp.patch.sourceRef.file))];
+        console.log(`  ${G}✓ Applied ${staticPatches.length} fixes to ${modifiedFiles.length} file${modifiedFiles.length > 1 ? "s" : ""}:${R}`);
+        for (const f of modifiedFiles) console.log(`    ${D}${f}${R}`);
+        if (isGitRepo()) console.log(`  ${D}Review: git diff | Revert: git checkout -- <file>${R}`);
+        console.log();
+      }
+    }
+
+    // Ask if user wants browser scan too
+    if (targets.some((t) => t.isUrl)) {
+      const doBrowser = await confirm("Run browser scan for color contrast, ARIA tree, and keyboard issues?", false);
+      if (!doBrowser) {
+        // Skip browser scan — cleanup and exit
+        for (const t of targets) {
+          if (t.serverProcess) stopDevServer(t.serverProcess);
+          if (t.clonedProject) await t.clonedProject.cleanup();
+        }
+        if (llmClient && llmClient.getCostSummary().totalCalls > 0) {
+          printCostSummary(llmClient.getCostSummary());
+        }
+        if (allPatches.length > 0) {
+          const fileCount = new Set(allPatches.map((p) => p.sourceRef.file)).size;
+          console.log(`${B}Done: ${allPatches.length} fixes applied across ${fileCount} file${fileCount > 1 ? "s" : ""}${R}\n`);
+        }
+        await new Promise<void>((r) => setTimeout(r, 100));
+        process.exit(0);
+      }
+    }
+  } else if (targets.length === 0) {
     console.error("No scannable targets found.");
     process.exit(1);
   }
 
+  // ── Browser scan (deeper analysis) ──
+  if (!targets.some((t) => t.isUrl)) {
+    // No URLs to scan — we're done
+    if (allPatches.length > 0) {
+      const fileCount = new Set(allPatches.map((p) => p.sourceRef.file)).size;
+      console.log(`${B}Done: ${allPatches.length} fixes applied across ${fileCount} file${fileCount > 1 ? "s" : ""}${R}\n`);
+    }
+    process.exit(0);
+  }
+
+  console.log(`\n  ${B}Browser scan${R} ${D}(color contrast, ARIA tree, keyboard issues)${R}\n`);
+
   const renderer = new Renderer({ concurrency: config.concurrency, timeout: config.timeout });
-  const allPatches: Patch[] = [];
   let reportServer: { url: string; close: () => void } | null = null;
   const scannedUrls = new Set<string>();
 
-  // Build a mutable queue — crawled pages get added during the loop
-  const queue: ScanTarget[] = [...targets];
+  const queue: ScanTarget[] = [...targets.filter((t) => t.isUrl)];
 
   while (queue.length > 0) {
     const target = queue.shift()!;
@@ -192,15 +358,21 @@ export async function run(config: RecastConfig): Promise<void> {
     try {
       // ── 1. Scan ──
       const s1 = spinner(`Scanning ${target.url}`);
-      const rendered = target.isUrl
-        ? await renderer.renderUrl(target.url)
-        : await renderer.renderHtml(
-            await readFile(target.url.replace("file://", ""), "utf-8"),
-            target.url,
-          );
+      let rendered;
+      try {
+        rendered = target.isUrl
+          ? await renderer.renderUrl(target.url)
+          : await renderer.renderHtml(
+              await readFile(target.url.replace("file://", ""), "utf-8"),
+              target.url,
+            );
+        s1.stop();
+      } catch (loadErr) {
+        s1.stop(`  ${Y}✗ ${target.url}${R} — ${loadErr instanceof Error ? loadErr.message : "failed to load"}`);
+        continue;
+      }
       page = rendered.page;
       const p = page;
-      s1.stop();
 
       // Discover internal links for multi-page crawling
       if (target.isUrl && scannedUrls.size <= 20) {

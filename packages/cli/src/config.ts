@@ -50,10 +50,15 @@ function printHelp(): void {
 recast — Automated Accessibility Rewriter
 
 Usage:
-  recast <files, urls, or dirs...>
+  recast <target>
 
-  Scans for violations, shows results, then walks you through
-  fixing them interactively.
+  Targets:
+    .                         Current directory
+    ./path/to/project         Local project (auto-starts dev server)
+    index.html                Static HTML file
+    http://localhost:3000     Running dev server (audit + trace to source)
+    https://example.com       Live website (audit only, no patching)
+    github:user/repo          Clone, install, scan a public repo
 
 LLM Provider (auto-detected from env, or set explicitly):
   GEMINI_API_KEY      Gemini (default, cheapest)
@@ -64,15 +69,16 @@ Options:
   -p, --provider <name>   Force provider: gemini, openai, anthropic
   -k, --api-key <key>     API key (or use env vars above)
   -m, --model <model>     Override model name
+  -r, --project-root      Project root for source tracing
   --auto-fix-above <n>    Confidence threshold (default: 0.85)
   --concurrency <n>       Max concurrent pages (default: 4)
-  --timeout <ms>          Page load timeout (default: 15000)
+  --timeout <ms>          Page load timeout (default: 30000)
   -h, --help              Show this help message
 
 Examples:
-  recast index.html
-  recast https://mysite.com
-  recast ./src --provider openai
-  GEMINI_API_KEY=xxx recast index.html
+  recast .
+  recast fixtures/react-app
+  recast http://localhost:5173
+  recast github:vuejs/docs
 `);
 }

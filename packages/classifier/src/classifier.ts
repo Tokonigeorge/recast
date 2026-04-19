@@ -33,7 +33,7 @@ export function classify(
         level: "skip" as ConfidenceLevel,
         fix: {
           type: "manual-required",
-          reasoning: "Cannot be fixed by HTML/JSX patching — requires CSS, design, or runtime changes",
+          reasoning: violation.description,
           confidence: 0,
         },
       });

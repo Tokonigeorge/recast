@@ -6,3 +6,4 @@ export {
   captureLocalAriaContext,
   getNearestLandmark,
 } from "./aria-snapshot.js";
+export { staticAnalyze, type StaticScanResult } from "./static-analyzer.js";

@@ -24,6 +24,13 @@ Rules:
 - Never add both aria-label and aria-labelledby to the same element.
 - Adding aria-expanded, aria-selected, aria-checked requires JS state
   management — always flag these as manual-required.
+- For form inputs missing labels (rule "label"): add aria-label with
+  a descriptive name inferred from context (placeholder, surrounding text,
+  component name, field purpose). Do NOT just add an id — an id alone
+  doesn't create a label association.
+- Values MUST be plain literal strings. Never use template literals
+  (\${...}), function calls (Math.random()), or JavaScript expressions
+  in attribute values. The value is written verbatim to the source file.
 
 Output format — always end your response with this YAML block:
 

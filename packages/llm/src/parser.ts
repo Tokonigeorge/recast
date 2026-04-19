@@ -68,7 +68,28 @@ export function parseLlmOutput(text: string): Fix {
     }
   }
 
+  // Validate: reject fixes with obviously broken values (template literals, unterminated strings)
+  if (fix.value && isBrokenValue(fix.value)) {
+    return {
+      type: "manual-required",
+      reasoning: "LLM output was truncated or invalid",
+      confidence: 0,
+      note: fix.reasoning,
+    };
+  }
+
   return fix;
+}
+
+/** Detect LLM output that was truncated mid-string or contains unescaped template literals. */
+function isBrokenValue(v: string): boolean {
+  // Unterminated template literal
+  if (v.includes("${") && !/\$\{[^}]*\}/.test(v)) return true;
+  // Contains JS expression syntax that shouldn't be in an HTML attribute value
+  if (/\bMath\.|\bDate\.|\brandom\(/.test(v)) return true;
+  // Ends mid-word (truncated)
+  if (/\.toStr$|\.toFi$|\.slic$/.test(v)) return true;
+  return false;
 }
 
 /** Parse a batched LLM response containing fix_1, fix_2, ... blocks. */

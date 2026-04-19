@@ -19,6 +19,8 @@ export interface Violation {
   target: string;
   helpUrl: string;
   pageUrl: string;
+  /** Line number in source file (set by static analyzer, optional for browser-detected) */
+  line?: number;
 }
 
 export interface EnrichedViolation extends Violation {
