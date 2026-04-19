@@ -268,12 +268,25 @@ export async function run(config: RecastConfig): Promise<void> {
         : patchHtml(sourceContents, sourceRef, cv.violation.html, cv.fix);
       if (!patched || patched === sourceContents) continue;
 
-      const original = sourceContents.split("\n")[sourceRef.line - 1]?.trim() ?? "";
-      const fixed = patched.split("\n")[sourceRef.line - 1]?.trim() ?? "";
+      // Find the first line that actually changed (multi-line JSX means the
+      // attribute might be inserted several lines below sourceRef.line)
+      const origLines = sourceContents.split("\n");
+      const newLines = patched.split("\n");
+      let changedLine = sourceRef.line - 1;
+      for (let i = sourceRef.line - 1; i < Math.min(origLines.length, newLines.length); i++) {
+        if (origLines[i] !== newLines[i]) { changedLine = i; break; }
+      }
+      const original = origLines[changedLine]?.trim() ?? "";
+      const fixed = newLines[changedLine]?.trim() ?? "";
+      if (original === fixed) continue; // no actual change in diff
 
       staticPatches.push({
         cv,
-        patch: { sourceRef, violation: cv.violation, fix: cv.fix, originalCode: original, fixedCode: fixed },
+        patch: {
+          sourceRef: { ...sourceRef, line: changedLine + 1 },
+          violation: cv.violation, fix: cv.fix,
+          originalCode: original, fixedCode: fixed,
+        },
       });
     }
 

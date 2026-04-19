@@ -421,7 +421,16 @@ export const AST_RULES: AstRule[] = [
     wcag: "3.2.1",
     impact: "moderate",
     jsxElement(path, ctx) {
-      if (!hasAttribute(path.node, "autoFocus", "autofocus")) return null;
+      // Only flag lowercase HTML elements — component libraries (Radix, Headless UI, etc.)
+      // manage focus themselves and shouldn't be flagged
+      const name = getElementName(path.node);
+      if (!/^[a-z]/.test(name)) return null;
+      // Require an explicit autoFocus/autofocus attribute (not a spread)
+      const hasExplicit = path.node.attributes.some((attr) =>
+        t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name) &&
+        (attr.name.name === "autoFocus" || attr.name.name === "autofocus")
+      );
+      if (!hasExplicit) return null;
       return makeViolation(this, path, ctx);
     },
   },
@@ -534,8 +543,12 @@ export const AST_RULES: AstRule[] = [
         const name = attr.name.name;
         const enumValues = ARIA_ENUM_VALUES[name];
         if (!enumValues) continue;
+        // Boolean shorthand <Foo aria-hidden /> → value is null
+        // Dynamic expression <Foo aria-hidden={x} /> → we can't validate
+        if (attr.value === null || attr.value === undefined) continue;
         const value = getAttributeStringValue(attr);
-        if (value === null) continue; // dynamic — can't check
+        if (value === null) continue; // dynamic/non-literal — can't check
+        if (value === "") continue; // empty value — probably malformed source, don't flag here
         if (!enumValues.has(value)) {
           violations.push(makeViolation(this, path, ctx, {
             description: `Invalid value "${value}" for ${name}`,
