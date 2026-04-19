@@ -184,6 +184,8 @@ export async function run(config: RecastConfig): Promise<void> {
     projectRoots.add(resolve(t));
   }
 
+  let reportServer: { url: string; close: () => void } | null = null;
+
   let staticViolationCount = 0;
   const staticResults: Array<{ file: string; violations: Violation[] }> = [];
 
@@ -222,22 +224,78 @@ export async function run(config: RecastConfig): Promise<void> {
 
     const fixable = [...classification.high];
 
-    // Run LLM for low-confidence if available
+    // Run LLM for low-confidence violations with chunked processing for large codebases
     if (llmClient && classification.low.length > 0) {
-      const s3 = spinner(`Generating ${classification.low.length} fixes via ${llmClient.providerName}`);
-      // Static violations don't have ARIA context, so enrich with what we have
-      const enriched = classification.low.map((cv) => ({
-        ...cv.violation,
-        ariaContext: "",
-        section: "unknown",
-        pageTitle: "unknown",
-      }));
-      const fixes = await llmClient.generateFixes(enriched);
-      s3.stop();
+      const CHUNK_SIZE = 100;
+      const HARD_CAP = 500;
+      const total = classification.low.length;
 
-      for (let i = 0; i < classification.low.length; i++) {
-        if (fixes[i].confidence >= config.autoFixAbove) {
-          fixable.push({ ...classification.low[i], fix: fixes[i] });
+      // Estimate cost: ~1900 input + 150 output tokens per violation, flash-lite pricing
+      const estTokens = total * 2050;
+      const estCost = (total * 1900 / 1_000_000) * 0.10 + (total * 150 / 1_000_000) * 0.40;
+      const estMinutes = Math.ceil(total / 5 * 2.5 / 60); // ~2.5s per batch of 5
+
+      let toProcess: ClassifiedViolation[] = classification.low;
+
+      if (total > HARD_CAP) {
+        console.log(`  ${Y}⚠  ${total} violations need LLM fixes — too many to process at once.${R}`);
+        console.log(`  ${D}Processing in chunks of ${CHUNK_SIZE}. You'll confirm between chunks.${R}\n`);
+      } else if (total > CHUNK_SIZE) {
+        console.log(`  ${Y}${total} violations need LLM fixes.${R}`);
+        console.log(`  ${D}Estimated: ~${estMinutes} min, ~$${estCost.toFixed(3)}, ~${estTokens.toLocaleString()} tokens${R}`);
+        const all = await confirm(`Process all ${total} now? (n = chunks of ${CHUNK_SIZE} with confirmation)`);
+        if (!all) {
+          // Fall through to chunked mode
+        }
+      }
+
+      // Process in chunks, streaming results as each batch completes
+      let processed = 0;
+      while (processed < toProcess.length) {
+        const end = Math.min(processed + CHUNK_SIZE, toProcess.length);
+        const chunk = toProcess.slice(processed, end);
+
+        const s3 = spinner(
+          `Generating fixes ${processed + 1}-${end} of ${total} via ${llmClient.providerName}`,
+        );
+        const enriched = chunk.map((cv) => ({
+          ...cv.violation,
+          ariaContext: "",
+          section: "unknown",
+          pageTitle: "unknown",
+        }));
+        const fixes = await llmClient.generateFixes(enriched);
+        s3.stop();
+
+        let added = 0;
+        for (let i = 0; i < chunk.length; i++) {
+          const updated = { ...chunk[i], fix: fixes[i] };
+          // Update the classification.low entry so it carries the LLM fix/reasoning
+          // for display in the browser report (even if below threshold)
+          const idx = classification.low.indexOf(chunk[i]);
+          if (idx >= 0) classification.low[idx] = updated;
+          if (fixes[i].confidence >= config.autoFixAbove) {
+            fixable.push(updated);
+            added++;
+          }
+        }
+        const belowThreshold = chunk.length - added;
+        console.log(
+          `  ${G}✓${R} Batch ${Math.floor(processed / CHUNK_SIZE) + 1}: ` +
+          `${chunk.length} processed — ${G}${added} ready${R}` +
+          (belowThreshold > 0 ? `, ${Y}${belowThreshold} flagged${R} ${D}(below ${config.autoFixAbove} confidence — visible in browser report)${R}` : ""),
+        );
+
+        processed = end;
+
+        // Ask to continue between chunks if there are more and we exceeded CHUNK_SIZE
+        if (processed < toProcess.length && total > CHUNK_SIZE) {
+          const remaining = toProcess.length - processed;
+          const keepGoing = await confirm(`Continue with next ${Math.min(CHUNK_SIZE, remaining)} of ${remaining} remaining?`);
+          if (!keepGoing) {
+            console.log(`  ${D}Stopped. ${processed} of ${total} violations processed.${R}\n`);
+            break;
+          }
         }
       }
     }
@@ -289,6 +347,36 @@ export async function run(config: RecastConfig): Promise<void> {
         },
       });
     }
+
+    // Open browser report for static analysis violations
+    const projectRootForReport = [...projectRoots][0] ?? process.cwd();
+    const staticReportData = buildReportData(
+      projectRootForReport,
+      classification.high,
+      classification.low,
+      classification.skipped,
+      staticPatches,
+    );
+    const staticReportHtml = generateHtmlReport(staticReportData);
+    reportServer = await serveReport({
+      html: staticReportHtml,
+      onFix: async (indices) => {
+        let count = 0;
+        for (const idx of indices) {
+          const v = staticReportData.violations[idx];
+          if (!v?.diff) continue;
+          const match = staticPatches.find(
+            (tp) => tp.patch.sourceRef.file === v.diff!.file && tp.patch.sourceRef.line === v.diff!.line,
+          );
+          if (match) {
+            const applied = await writePatch(match.cv.violation, match.cv.fix, match.patch.sourceRef);
+            if (applied) { allPatches.push(applied); count++; }
+          }
+        }
+        return count;
+      },
+    });
+    console.log(`  ${D}Report: ${reportServer.url}${R}\n`);
 
     if (staticPatches.length > 0) {
       console.log(`  ${B}${staticPatches.length} fixes:${R}\n`);
@@ -354,7 +442,8 @@ export async function run(config: RecastConfig): Promise<void> {
   console.log(`\n  ${B}Browser scan${R} ${D}(color contrast, ARIA tree, keyboard issues)${R}\n`);
 
   const renderer = new Renderer({ concurrency: config.concurrency, timeout: config.timeout });
-  let reportServer: { url: string; close: () => void } | null = null;
+  // Close any existing static report server before opening a new one for the browser scan
+  if (reportServer) { reportServer.close(); reportServer = null; }
   const scannedUrls = new Set<string>();
 
   const queue: ScanTarget[] = [...targets.filter((t) => t.isUrl)];

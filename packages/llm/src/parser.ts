@@ -68,7 +68,7 @@ export function parseLlmOutput(text: string): Fix {
     }
   }
 
-  // Validate: reject fixes with obviously broken values (template literals, unterminated strings)
+  // Validate: reject fixes with broken, useless, or instruction-as-value outputs
   if (fix.value && isBrokenValue(fix.value)) {
     return {
       type: "manual-required",
@@ -78,17 +78,42 @@ export function parseLlmOutput(text: string): Fix {
     };
   }
 
+  // For aria-label specifically, reject useless values
+  if (fix.attribute === "aria-label" && fix.value && isUselessLabel(fix.value)) {
+    return {
+      type: "manual-required",
+      reasoning: "LLM could not infer a meaningful label — needs human review",
+      confidence: 0,
+      note: `LLM suggested: "${fix.value}". Please provide a descriptive label manually.`,
+    };
+  }
+
   return fix;
 }
 
-/** Detect LLM output that was truncated mid-string or contains unescaped template literals. */
 function isBrokenValue(v: string): boolean {
-  // Unterminated template literal
   if (v.includes("${") && !/\$\{[^}]*\}/.test(v)) return true;
-  // Contains JS expression syntax that shouldn't be in an HTML attribute value
   if (/\bMath\.|\bDate\.|\brandom\(/.test(v)) return true;
-  // Ends mid-word (truncated)
   if (/\.toStr$|\.toFi$|\.slic$/.test(v)) return true;
+  return false;
+}
+
+/** Reject aria-label values that aren't real labels (component names, instructions to the LLM). */
+function isUselessLabel(v: string): boolean {
+  const lower = v.toLowerCase().trim();
+
+  // Just the component name — "Input", "Select", "Textarea", "Button", etc.
+  if (/^(input|select|textarea|button|checkbox|radio|field|form|element)$/i.test(lower)) return true;
+
+  // LLM regurgitated the instruction as the label
+  if (/please provide|provide a (descriptive|meaningful|accessible) (label|name)/i.test(lower)) return true;
+  if (/based on (context|surrounding|the element)/i.test(lower)) return true;
+  if (/^(descriptive|meaningful|accessible) (label|name)/i.test(lower)) return true;
+  if (/^(todo|tbd|fixme|xxx|placeholder)/i.test(lower)) return true;
+
+  // Too generic to be useful
+  if (/^(text|input field|form field|click here|button|link)$/i.test(lower)) return true;
+
   return false;
 }
 
