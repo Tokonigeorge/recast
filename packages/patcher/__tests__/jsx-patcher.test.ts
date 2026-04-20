@@ -167,4 +167,51 @@ describe("patchJsx", () => {
     expect(result).not.toBeNull();
     expect(result).toContain('alt="Product photo"');
   });
+
+  it("does not modify closing tags when opening tag is already closed", () => {
+    // Regression: patcher was inserting attrs before the > of </div>
+    const jsx = [
+      "<div>",
+      "  <textarea />",
+      "</div>",
+    ].join("\n");
+    const fix: Fix = {
+      type: "add-attribute",
+      attribute: "aria-label",
+      value: "Comments",
+      reasoning: "label textarea",
+      confidence: 0.9,
+    };
+
+    const result = patchJsx(jsx, makeSourceRef(2), "<textarea>", fix);
+    expect(result).not.toBeNull();
+    // Must not corrupt the closing tag
+    expect(result).not.toContain("</div aria-label");
+    expect(result).not.toContain("</select aria-label");
+    // Should add to the textarea
+    expect(result).toContain('aria-label="Comments"');
+  });
+
+  it("does not corrupt closing tags when patching element deep in tree", () => {
+    const jsx = [
+      "<form>",
+      "  <select>",
+      "    <option>A</option>",
+      "  </select>",
+      "</form>",
+    ].join("\n");
+    const fix: Fix = {
+      type: "add-attribute",
+      attribute: "aria-label",
+      value: "Choose option",
+      reasoning: "label select",
+      confidence: 0.9,
+    };
+
+    const result = patchJsx(jsx, makeSourceRef(2), "<select>", fix);
+    expect(result).not.toBeNull();
+    expect(result).not.toContain("</select aria-label");
+    expect(result).not.toContain("</form aria-label");
+    expect(result).toContain('aria-label="Choose option"');
+  });
 });

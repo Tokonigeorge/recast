@@ -306,10 +306,17 @@ export async function run(config: RecastConfig): Promise<void> {
       `  ${D}${classification.skipped.length} skipped (CSS/manual)${R}\n`,
     );
 
-    // Build patches — use the line number the static analyzer already captured
+    // Build patches — track why any fixes drop so we can diagnose
     const staticPatches: Array<{ cv: ClassifiedViolation; patch: Patch }> = [];
+    const dropped: Array<{ cv: ClassifiedViolation; reason: string }> = [];
+
     for (const cv of fixable) {
-      // Use the line number captured at analysis time (much more reliable than re-tracing)
+      // If the LLM gave up (manual-required with 0 confidence), it's not a real fix
+      if (cv.fix.type === "manual-required") {
+        dropped.push({ cv, reason: `LLM couldn't produce a fix: ${cv.fix.reasoning}` });
+        continue;
+      }
+
       const sourceRef = cv.violation.line
         ? { file: cv.violation.pageUrl, line: cv.violation.line }
         : traceInStaticHtml(
@@ -317,17 +324,26 @@ export async function run(config: RecastConfig): Promise<void> {
             cv.violation.pageUrl,
             cv.violation.html,
           );
-      if (!sourceRef) continue;
+      if (!sourceRef) {
+        dropped.push({ cv, reason: "Could not locate element in source file" });
+        continue;
+      }
 
       const sourceContents = await readFile(sourceRef.file, "utf-8");
       const ext = sourceRef.file.match(/\.(jsx|tsx|js|ts)$/i);
       const patched = ext
         ? patchJsx(sourceContents, sourceRef, cv.violation.html, cv.fix)
         : patchHtml(sourceContents, sourceRef, cv.violation.html, cv.fix);
-      if (!patched || patched === sourceContents) continue;
 
-      // Find the first line that actually changed (multi-line JSX means the
-      // attribute might be inserted several lines below sourceRef.line)
+      if (!patched) {
+        dropped.push({ cv, reason: `Patcher could not apply ${cv.fix.type} — element structure too complex` });
+        continue;
+      }
+      if (patched === sourceContents) {
+        dropped.push({ cv, reason: "Attribute already present or patch was a no-op" });
+        continue;
+      }
+
       const origLines = sourceContents.split("\n");
       const newLines = patched.split("\n");
       let changedLine = sourceRef.line - 1;
@@ -336,7 +352,10 @@ export async function run(config: RecastConfig): Promise<void> {
       }
       const original = origLines[changedLine]?.trim() ?? "";
       const fixed = newLines[changedLine]?.trim() ?? "";
-      if (original === fixed) continue; // no actual change in diff
+      if (original === fixed) {
+        dropped.push({ cv, reason: "Diff was empty after patching" });
+        continue;
+      }
 
       staticPatches.push({
         cv,
@@ -346,6 +365,27 @@ export async function run(config: RecastConfig): Promise<void> {
           originalCode: original, fixedCode: fixed,
         },
       });
+    }
+
+    // Show diagnostics if any fixes dropped
+    if (dropped.length > 0) {
+      const byReason: Record<string, number> = {};
+      const examplesByReason: Record<string, string> = {};
+      for (const d of dropped) {
+        // Group by a normalized reason key
+        const key = d.reason.split(":")[0].split("—")[0].trim();
+        byReason[key] = (byReason[key] ?? 0) + 1;
+        if (!examplesByReason[key]) {
+          examplesByReason[key] = `${d.cv.violation.ruleId} in ${d.cv.violation.pageUrl.split("/").slice(-2).join("/")}:${d.cv.violation.line}`;
+        }
+      }
+
+      console.log(`  ${Y}${dropped.length} fixes dropped${R} ${D}(LLM approved but couldn't be applied):${R}`);
+      for (const [reason, count] of Object.entries(byReason).sort((a, b) => b[1] - a[1])) {
+        console.log(`    ${D}${count}× ${R}${reason}`);
+        console.log(`      ${D}e.g. ${examplesByReason[reason]}${R}`);
+      }
+      console.log();
     }
 
     // Open browser report for static analysis violations

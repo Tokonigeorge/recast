@@ -33,13 +33,18 @@ function htmlAttrToJsx(attr: string): string {
 }
 
 /**
- * Find the line that closes the opening JSX tag starting at lineIdx.
- * Refuses to match closing tags (</foo>) — those are not opening tags.
+ * Find the `>` (or `/>`) that closes the FIRST opening JSX tag found at or after lineIdx.
+ * Returns null if we can't find a valid opening tag or its closing bracket.
+ *
+ * Rules:
+ * - Only counts `<Identifier` as an opening tag (skips `</...` closing tags and `<>` fragments).
+ * - Stops scanning once we've found one opening tag and return its matching `>`.
+ * - Ignores `<` / `>` inside string literals, template strings, and JSX expressions `{...}`.
  */
 function findTagCloseInfo(lines: string[], lineIdx: number): { closeLine: number; closeCol: number } | null {
   let inString: string | null = null;
   let braceDepth = 0;
-  let foundOpenTag = false;
+  let insideOpeningTag = false;
 
   for (let ln = lineIdx; ln < Math.min(lineIdx + 20, lines.length); ln++) {
     const line = lines[ln];
@@ -51,24 +56,29 @@ function findTagCloseInfo(lines: string[], lineIdx: number): { closeLine: number
         if (ch === inString && line[i - 1] !== "\\") inString = null;
         continue;
       }
-      if (ch === '"' || ch === "'") { inString = ch; continue; }
-      if (ch === "`") { inString = ch; continue; }
-      if (ch === "{") { braceDepth++; continue; }
-      if (ch === "}") { braceDepth--; continue; }
+      if (ch === '"' || ch === "'" || ch === "`") { inString = ch; continue; }
 
-      // Detect `<Identifier` (opening tag) — reject `</` (closing) and `<>` (fragment)
-      if (ch === "<" && !foundOpenTag) {
+      // Track JSX expression braces only when inside the opening tag
+      if (insideOpeningTag) {
+        if (ch === "{") { braceDepth++; continue; }
+        if (ch === "}") { braceDepth--; continue; }
+      }
+
+      if (!insideOpeningTag) {
+        // Still looking for the opening tag start
+        if (ch !== "<") continue;
         const next = line[i + 1];
-        if (next === "/") continue; // closing tag — skip
-        if (next === ">" || next === "<") continue; // fragment or invalid
-        if (next && /[a-zA-Z]/.test(next)) {
-          foundOpenTag = true;
-          continue;
+        if (!next) continue;
+        if (next === "/" || next === ">" || next === "<") continue; // closing, fragment, or invalid
+        if (next === "!") continue; // <!-- comment or <!DOCTYPE
+        if (/[a-zA-Z]/.test(next)) {
+          insideOpeningTag = true;
         }
         continue;
       }
 
-      if (braceDepth === 0 && foundOpenTag) {
+      // We're inside an opening tag — look for its closing > or />
+      if (braceDepth === 0) {
         if (ch === "/" && line[i + 1] === ">") return { closeLine: ln, closeCol: i };
         if (ch === ">" && (i === 0 || line[i - 1] !== "=")) return { closeLine: ln, closeCol: i };
       }

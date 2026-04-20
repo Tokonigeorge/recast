@@ -105,14 +105,19 @@ function isUselessLabel(v: string): boolean {
   // Just the element/component type — "Input", "Textarea", "Text area", "Textbox", etc.
   if (/^(input|select|textarea|text ?area|text ?box|text ?field|button|checkbox|radio|field|form|element|dropdown|combobox)$/i.test(lower)) return true;
 
-  // LLM regurgitated the instruction as the label
-  if (/please provide|provide a (descriptive|meaningful|accessible) (label|name)/i.test(lower)) return true;
-  if (/based on (context|surrounding|the element)/i.test(lower)) return true;
-  if (/^(descriptive|meaningful|accessible) (label|name)/i.test(lower)) return true;
+  // LLM regurgitated the instruction as the label (anywhere in the string)
+  if (/please provide/i.test(lower)) return true;
+  if (/provide a (descriptive|meaningful|accessible|suitable|short|brief) (label|name)/i.test(lower)) return true;
+  if (/based on (context|surrounding|the element|its purpose)/i.test(lower)) return true;
+  if (/for (this|the) (input|field|element|textarea|select|component)/i.test(lower)) return true;
+  if (/\b(descriptive|meaningful|accessible) (label|name)\b/i.test(lower)) return true;
   if (/^(todo|tbd|fixme|xxx|placeholder|unknown|unnamed)/i.test(lower)) return true;
 
   // Too generic to be useful
   if (/^(text|input field|form field|click here|button|link|value|name|label)$/i.test(lower)) return true;
+
+  // Suspiciously long values (> 80 chars) are probably the LLM writing prose, not a label
+  if (v.length > 80) return true;
 
   return false;
 }
